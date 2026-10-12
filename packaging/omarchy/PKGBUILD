@@ -25,7 +25,7 @@ _basever=2026.914.233613  # upstream Sunshine tag this branch is based on (v${_b
 
 pkgname='sunshine-mic'
 pkgver=${_basever}
-pkgrel=1
+pkgrel=2
 pkgdesc="Self-hosted game stream host for Moonlight, with client-to-host microphone streaming"
 arch=('x86_64' 'aarch64')
 url=${_project_url}
