@@ -168,10 +168,25 @@ A 13-byte variant with a 16-bit type of `0x5504` is also accepted. Any valid Opu
   registry (over loopback with real Opus), the default-source policy, and the PipeWire glue against a **private
   PipeWire daemon** (own runtime directory, own `default` metadata object, no session manager; the user's session
   is never touched).
-- Isolated end-to-end harness: `tests/e2e/mic_e2e.py` runs the real `sunshine` binary in a private network
-  namespace with a private PipeWire daemon and a synthetic Moonlight client (HTTPS launch, RTSP
-  `SETUP`/`ANNOUNCE`, UDP Opus, recording from the virtual source). See `tests/e2e/README.md`.
-- Not covered by automation: a real VoidLink/iPad session, Windows/macOS builds.
+- Isolated end-to-end harness: `tests/e2e/mic_e2e.py` runs the real `sunshine` binary in a private user, network
+  and mount namespace with a private PipeWire daemon and a synthetic Moonlight client (HTTPS launch, RTSP
+  `SETUP`/`ANNOUNCE`, ENet control attach, UDP Opus, recording from the virtual source). See `tests/e2e/README.md`.
+- Not covered by automation: a real VoidLink/iPad session (the acceptance gate), Windows/macOS builds, NAT,
+  encrypted main streams.
+
+### Evidence (2026-10-12)
+
+| Check | Result |
+|---|---|
+| `test_sunshine --gtest_filter='Mic*:ConfigConsistencyTest.*:LocaleConsistencyTest.*'` | 88 tests in 10 suites, all pass |
+| PipeWire glue against a private daemon (`MicSinkPipeWireTest`) | switch and restore a previous source; delete the key when none was configured; keep a source the user chose mid-session; keep an explicit clearing; ignore a stale own node; leave the default alone when switching is disabled; work without a `default` metadata object; bounded teardown when the daemon dies |
+| `tests/e2e/mic_e2e.py` against the packaged `sunshine` executable | 20/20 scenarios: `baseline`, `previous-default`, `mic-disabled`, `default-disabled`, `toggle-restart`, `toggle-restart-lost-first`, `reconnect`, `reconnect-concurrent`, `no-packets`, `port-blocked`, `fresh-launch`, `sticky-setup`, `killed-host`, `user-replaced-default`, `user-cleared-default`, `foreign-source-ip`, `announce-attributes`, `pending-launch`, `ambiguous-same-ip`, `same-client-supersede` |
+| Package lint (`appstreamcli` 1.2.0, `appstream-util` 0.8.4, `desktop-file-validate` 0.28) | metainfo and desktop files validate |
+
+Findings that the harness reproduced before the fixes, and now guards against: a restart that loses packet 0 after
+hundreds of packets stayed silent for as long as the old counter had run; a user's mid-session default source was
+overwritten at teardown; a microphone SETUP from an abandoned RTSP attempt leaked into the next attempt of the same
+launch; two clients on one address were both accepted.
 
 ## Development
 
