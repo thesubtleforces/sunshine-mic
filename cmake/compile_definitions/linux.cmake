@@ -260,6 +260,7 @@ endif()
 if(PIPEWIRE_FOUND)
     include_directories(SYSTEM ${PIPEWIRE_INCLUDE_DIRS})
     list(APPEND PLATFORM_LIBRARIES ${PIPEWIRE_LIBRARIES})
+    add_compile_definitions(SUNSHINE_BUILD_PIPEWIRE_MIC)
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/platform/linux/pipewire.cpp")
 endif()
@@ -320,6 +321,8 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/graphics.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/mic_source.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/mic_source.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp")
 
 list(APPEND PLATFORM_LIBRARIES

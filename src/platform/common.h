@@ -909,6 +909,43 @@ namespace platf {
   std::unique_ptr<audio_control_t> audio_control();
 
   /**
+   * @brief Parameters of the host-side virtual microphone fed by a client's microphone stream.
+   */
+  struct mic_sink_config_t {
+    std::uint32_t sample_rate;  ///< PCM sample rate in Hz.
+    int channels;  ///< PCM channel count.
+    bool set_default_source;  ///< Make the virtual source the system default input while it exists.
+  };
+
+  /**
+   * @brief Host-side virtual microphone that plays back PCM received from a client.
+   *
+   * The device exists for as long as the object does; destroying it removes the device
+   * and restores any system default it changed.
+   */
+  class mic_sink_t {
+  public:
+    virtual ~mic_sink_t() = default;
+
+    /**
+     * @brief Queue interleaved signed 16-bit PCM frames for the virtual microphone.
+     *
+     * @param pcm Interleaved samples.
+     * @param frames Number of frames (samples per channel).
+     * @return 0 on success, or a negative value when the backend is gone.
+     */
+    virtual int write(const std::int16_t *pcm, std::size_t frames) = 0;
+  };
+
+  /**
+   * @brief Create the platform virtual microphone.
+   *
+   * @param config Format and behaviour of the device.
+   * @return The virtual microphone, or nullptr when unsupported or unavailable on this platform.
+   */
+  std::unique_ptr<mic_sink_t> mic_sink_create(const mic_sink_config_t &config);
+
+  /**
    * @brief Get the display_t instance for the given hwdevice_type.
    * If display_name is empty, use the first monitor that's compatible you can find
    * If you require to use this parameter in a separate thread, make a copy of it.

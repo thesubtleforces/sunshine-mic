@@ -1550,6 +1550,10 @@ namespace platf {
     return control;
   }
 
+  std::unique_ptr<mic_sink_t> mic_sink_create([[maybe_unused]] const mic_sink_config_t &config) {
+    return nullptr;
+  }
+
   std::unique_ptr<deinit_t> init() {
     if (dxgi::init()) {
       return nullptr;

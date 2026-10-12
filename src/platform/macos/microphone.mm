@@ -158,4 +158,8 @@ namespace platf {
   std::unique_ptr<audio_control_t> audio_control() {
     return std::make_unique<macos_audio_control_t>();
   }
+
+  std::unique_ptr<mic_sink_t> mic_sink_create([[maybe_unused]] const mic_sink_config_t &config) {
+    return nullptr;
+  }
 }  // namespace platf
