@@ -75,6 +75,25 @@ const config = ref(props.config)
               default="true"
     ></Checkbox>
 
+    <!-- Client microphone -->
+    <PlatformLayout :platform="platform">
+      <template #linux>
+        <Checkbox class="mb-3"
+                  id="stream_mic"
+                  locale-prefix="config"
+                  v-model="config.stream_mic"
+                  default="true"
+        ></Checkbox>
+
+        <Checkbox class="mb-3"
+                  id="mic_default_source"
+                  locale-prefix="config"
+                  v-model="config.mic_default_source"
+                  default="true"
+        ></Checkbox>
+      </template>
+    </PlatformLayout>
+
     <AdapterNameSelector
         :platform="platform"
         :config="config"

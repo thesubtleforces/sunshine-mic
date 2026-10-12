@@ -19,6 +19,7 @@ namespace stream {
   constexpr auto VIDEO_STREAM_PORT = 9;  ///< GameStream base-port offset used for the video UDP stream.
   constexpr auto CONTROL_PORT = 10;  ///< GameStream base-port offset used for the control channel.
   constexpr auto AUDIO_STREAM_PORT = 11;  ///< GameStream base-port offset used for the audio UDP stream.
+  constexpr auto MIC_STREAM_PORT = 12;  ///< Base-port offset used for the client-to-host microphone UDP stream (Foundation-compatible).
 
   struct session_t;
 
@@ -37,6 +38,8 @@ namespace stream {
     int videoQosType;  ///< Video QoS type.
 
     uint32_t encryptionFlagsEnabled;  ///< Bitmask of GameStream encryption features enabled for the session.
+
+    bool enable_mic = false;  ///< Whether the client issued SETUP for the microphone stream and the host accepts it.
 
     std::optional<int> gcmap;  ///< Optional game-controller mapping override from the launch request.
   };

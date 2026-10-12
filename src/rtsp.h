@@ -38,6 +38,7 @@ namespace rtsp_stream {
     bool continuous_audio;  ///< Whether audio packets continue during silence.
     bool enable_hdr;  ///< Whether HDR streaming is requested.
     bool enable_sops;  ///< Whether sequence output protection is requested.
+    bool setup_mic;  ///< Set by RTSP SETUP streamid=mic when microphone streaming is enabled on the host.
     std::string client_name;  ///< Friendly client name from initial pairing.
 
     std::optional<crypto::cipher::gcm_t> rtsp_cipher;  ///< AES-GCM cipher used once encrypted RTSP is negotiated.

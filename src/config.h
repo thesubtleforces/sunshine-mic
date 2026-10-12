@@ -229,6 +229,8 @@ namespace config {
     std::string virtual_sink;  ///< Virtual audio sink for audio routing
     bool stream;  ///< Enable audio streaming to clients
     bool install_steam_drivers;  ///< Install Steam audio drivers for enhanced compatibility
+    bool stream_mic;  ///< Accept the client's microphone stream and expose it as a host virtual source (Linux/PipeWire)
+    bool mic_default_source;  ///< Make the virtual microphone the default audio source while a mic session is active
   };
 
   /**

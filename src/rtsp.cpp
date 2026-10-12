@@ -1029,6 +1029,10 @@ namespace rtsp_stream {
       port = net::map_port(stream::VIDEO_STREAM_PORT);
     } else if (type == "control"sv) {
       port = net::map_port(stream::CONTROL_PORT);
+    } else if (type == "mic"sv) {
+      // Always answer 200: some clients abort the whole connection when the microphone SETUP fails.
+      port = net::map_port(stream::MIC_STREAM_PORT);
+      session.setup_mic = config::audio.stream_mic;
     } else {
       cmd_not_found(sock, session, std::move(req));
 
@@ -1159,6 +1163,7 @@ namespace rtsp_stream {
       config.audioQosType = (int) util::from_view(args.at("x-nv-aqos.qosTrafficType"sv));
       config.videoQosType = (int) util::from_view(args.at("x-nv-vqos[0].qosTrafficType"sv));
       config.encryptionFlagsEnabled = (uint32_t) util::from_view(args.at("x-ss-general.encryptionEnabled"sv));
+      config.enable_mic = session.setup_mic;
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (util::from_view(args.at("x-nv-general.featureFlags"sv)) & 0x20) {

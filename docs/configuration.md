@@ -922,6 +922,58 @@ supported on the current platform.
     </tr>
 </table>
 
+### stream_mic
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Whether to accept the microphone stream a client sends to the host. When a client streams its microphone,
+            Sunshine decodes the audio and exposes it as the PipeWire audio source "Moonlight Mic". The stream uses
+            UDP port base + 12 (48001 with the default port).
+            @note{This option is only supported on Linux.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            stream_mic = disabled
+            @endcode</td>
+    </tr>
+</table>
+
+### mic_default_source
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            While a client microphone is connected, make "Moonlight Mic" the system default audio source so that
+            applications using the default input (dictation tools, voice chat) record from it. The previous default is
+            restored when the last microphone session ends.
+            @note{This option is only supported on Linux.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            mic_default_source = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### adapter_name
 
 <table>
