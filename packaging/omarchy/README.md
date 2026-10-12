@@ -15,7 +15,9 @@ makepkg -s --nocheck          # -s installs missing makedepends with sudo: appst
 ```
 
 - Pin an exact commit: `_commit=$(git rev-parse HEAD) makepkg -s --nocheck -f`
-- Build from a hosted fork: `_repo_url=https://github.com/<you>/Sunshine.git makepkg -s --nocheck -f`
+- Build from a hosted fork: `_repo_url=https://github.com/<you>/Sunshine.git makepkg -s --nocheck -f`. The web UI's
+  website and issue links follow `_repo_url` (override with `_project_url`), so reports never go to upstream's tracker.
+- Bump `pkgrel` for every rebuild of the same upstream base so the installed package can be told apart.
 - The result is `sunshine-mic-<version>-<rel>-x86_64.pkg.tar.zst` (plus a `-debug` split package).
 
 ## Install

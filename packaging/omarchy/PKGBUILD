@@ -14,7 +14,10 @@
 # Pin an exact commit, or build from a hosted fork instead:
 #   _commit=$(git rev-parse HEAD) makepkg -s -f
 #   _repo_url=https://github.com/<you>/Sunshine.git makepkg -s -f
+# The web UI links to _project_url (website) and _project_url/issues (issue tracker); it defaults to
+# _repo_url, so a hosted fork reports to itself and never to the upstream LizardByte tracker.
 : "${_repo_url:=file://$(cd "${startdir}/../.." && pwd)}"
+: "${_project_url:=${_repo_url%.git}}"
 : "${_branch:=mic}"
 : "${_commit:=}"
 
@@ -25,7 +28,7 @@ pkgver=${_basever}
 pkgrel=1
 pkgdesc="Self-hosted game stream host for Moonlight, with client-to-host microphone streaming"
 arch=('x86_64' 'aarch64')
-url=https://app.lizardbyte.dev/Sunshine
+url=${_project_url}
 license=('GPL-3.0-only')
 install=sunshine.install
 
@@ -173,8 +176,8 @@ build() {
       -D SUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine
       -D SUNSHINE_ASSETS_DIR="share/sunshine"
       -D SUNSHINE_PUBLISHER_NAME='sunshine-mic'
-      -D SUNSHINE_PUBLISHER_WEBSITE='https://github.com/LizardByte/Sunshine'
-      -D SUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/LizardByte/Sunshine/issues'
+      -D SUNSHINE_PUBLISHER_WEBSITE="${_project_url}"
+      -D SUNSHINE_PUBLISHER_ISSUE_URL="${_project_url}/issues"
     )
 
     if [[ $CARCH == aarch64 ]]; then
