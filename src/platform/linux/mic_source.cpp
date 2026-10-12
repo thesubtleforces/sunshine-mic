@@ -124,6 +124,64 @@ namespace platf::pw_mic {
     return rest.size() > kNodeName.size() && rest.substr(0, kNodeName.size()) == kNodeName && rest[kNodeName.size()] == '"';
   }
 
+  void default_source_policy_t::metadata_bound() {
+    // A new metadata object: nothing is known about its content until its properties have been observed.
+    current_.reset();
+    known_ = false;
+  }
+
+  void default_source_policy_t::observe(std::optional<configured_value_t> value) {
+    current_ = std::move(value);
+  }
+
+  void default_source_policy_t::synchronized() {
+    known_ = true;
+  }
+
+  bool default_source_policy_t::may_switch() const {
+    return known_ && !used_;
+  }
+
+  void default_source_policy_t::begin_switch() {
+    // A value naming our own node was left behind by a session that never restored it: that is not a preference.
+    previous_ = (current_ && names_own_node(current_->value)) ? std::nullopt : current_;
+    switched_ = true;
+    used_ = true;
+  }
+
+  default_source_policy_t::restore_plan_t default_source_policy_t::restore_plan() const {
+    if (!switched_ || !known_) {
+      return {restore_e::nothing, {}};
+    }
+
+    // Only restore while the virtual microphone still owns the default. A cleared key, or any other value,
+    // is the user's (or the session manager's) decision made during the session.
+    if (!current_ || !names_own_node(current_->value)) {
+      return {restore_e::nothing, {}};
+    }
+
+    if (previous_) {
+      return {restore_e::set_previous, *previous_};
+    }
+    return {restore_e::clear, {}};
+  }
+
+  void default_source_policy_t::finished() {
+    switched_ = false;
+  }
+
+  bool default_source_policy_t::switched() const {
+    return switched_;
+  }
+
+  std::optional<configured_value_t> default_source_policy_t::previous() const {
+    return previous_;
+  }
+
+  std::optional<configured_value_t> default_source_policy_t::current() const {
+    return current_;
+  }
+
   std::string default_source_json(std::string_view node_name) {
     std::string out {R"({"name":")"};
     for (const char c : node_name) {
@@ -229,7 +287,8 @@ namespace platf::pw_mic {
           "true",
           PW_KEY_NODE_LATENCY,
           "960/48000",
-          nullptr);
+          nullptr
+        );
 
         static const pw_stream_events stream_events = []() {
           pw_stream_events ev = {};
@@ -299,12 +358,14 @@ namespace platf::pw_mic {
       }
 
       /**
-       * @brief Remember the current default source and point it at the virtual microphone (loop must be locked).
+       * @brief Point the default source at the virtual microphone, if that can be done safely (loop must be locked).
+       *
+       * Nothing is written unless PipeWire answered every synchronisation barrier, so the previous value is known.
        */
       void switch_default_source() {
         registry_ = pw_core_get_registry(core_, PW_VERSION_REGISTRY, 0);
         if (!registry_) {
-          BOOST_LOG(warning) << "mic: cannot get the PipeWire registry; the default source will not be switched"sv;
+          BOOST_LOG(warning) << "mic: cannot get the PipeWire registry; the default audio source was left alone"sv;
           return;
         }
 
@@ -316,27 +377,94 @@ namespace platf::pw_mic {
         }();
         pw_registry_add_listener(registry_, &registry_listener_, &registry_events, this);
 
-        // The registry announces every global during the first roundtrip; the `default`
-        // metadata object is bound from the callback.
-        roundtrip();
+        // The registry announces every global during the first barrier; the `default` metadata object is bound
+        // from the callback and announces its properties before the second one completes.
+        if (!roundtrip()) {
+          BOOST_LOG(warning) << "mic: PipeWire did not answer in time; the default audio source was left alone"sv;
+          return;
+        }
         if (!metadata_) {
           BOOST_LOG(warning) << "mic: PipeWire 'default' metadata object not found (WirePlumber not running?); '"sv
-                             << kNodeDescription << "' will not become the default source"sv;
+                             << kNodeDescription << "' will not become the default audio source"sv;
+          return;
+        }
+        if (!roundtrip()) {
+          BOOST_LOG(warning) << "mic: PipeWire did not report the current default audio source in time; it was left alone"sv;
+          return;
+        }
+        policy_.synchronized();
+
+        if (!policy_.may_switch()) {
           return;
         }
 
-        // The bound metadata object announces its current properties asynchronously.
-        roundtrip();
+        const auto observed = policy_.current();
+        policy_.begin_switch();
+        if (observed && names_own_node(observed->value)) {
+          BOOST_LOG(warning) << "mic: ignoring a stale default audio source left behind by an earlier session: "sv << observed->value;
+        }
 
         const auto json = default_source_json(kNodeName);
-        if (pw_metadata_set_property(metadata_, PW_ID_CORE, kDefaultSourceKey.data(), "Spa:String:JSON", json.c_str()) < 0) {
-          BOOST_LOG(warning) << "mic: could not set the default audio source"sv;
+        if (const auto res = pw_metadata_set_property(metadata_, PW_ID_CORE, kDefaultSourceKey.data(), "Spa:String:JSON", json.c_str()); res < 0) {
+          BOOST_LOG(warning) << "mic: could not set the default audio source: "sv << spa_strerror(res);
           return;
         }
-        default_set_ = true;
+        if (!roundtrip()) {
+          BOOST_LOG(warning) << "mic: could not confirm that the default audio source was switched"sv;
+          return;
+        }
 
-        BOOST_LOG(info) << "mic: default audio source set to '"sv << kNodeName << "' (previous: "sv
-                        << (previous_default_ ? previous_default_->second : "none"s) << ')';
+        const auto previous = policy_.previous();
+        BOOST_LOG(info) << "mic: default audio source set to '"sv << kNodeName << "' (previous: "sv << (previous ? previous->value : "none"s) << ')';
+      }
+
+      /**
+       * @brief Put the default source back, but only while the virtual microphone still owns it (loop must be locked).
+       */
+      void restore_default_source() {
+        if (!policy_.switched()) {
+          return;
+        }
+
+        if (!core_ || !metadata_) {
+          BOOST_LOG(warning) << "mic: the PipeWire metadata object is gone; the default audio source cannot be restored"sv;
+          policy_.finished();
+          return;
+        }
+
+        // Bring the observed state up to date first: the user may have changed the default a moment ago.
+        if (!roundtrip()) {
+          BOOST_LOG(warning) << "mic: PipeWire did not answer in time; the default audio source was left as it is and may still name '"sv
+                             << kNodeName << "' (clear it with: pw-metadata -n default -d 0 "sv << kDefaultSourceKey << ')';
+          policy_.finished();
+          return;
+        }
+        policy_.synchronized();
+
+        const auto plan = policy_.restore_plan();
+        int res = 0;
+        switch (plan.action) {
+          case default_source_policy_t::restore_e::nothing:
+            BOOST_LOG(info) << "mic: the default audio source was changed during the session; leaving it as it is"sv;
+            policy_.finished();
+            return;
+          case default_source_policy_t::restore_e::set_previous:
+            res = pw_metadata_set_property(metadata_, PW_ID_CORE, kDefaultSourceKey.data(), plan.previous.type.empty() ? nullptr : plan.previous.type.c_str(), plan.previous.value.c_str());
+            break;
+          case default_source_policy_t::restore_e::clear:
+            // No default was configured before the switch; clear the key so the session manager chooses again.
+            res = pw_metadata_set_property(metadata_, PW_ID_CORE, kDefaultSourceKey.data(), nullptr, nullptr);
+            break;
+        }
+
+        if (res < 0) {
+          BOOST_LOG(warning) << "mic: could not restore the default audio source: "sv << spa_strerror(res);
+        } else if (!roundtrip()) {
+          BOOST_LOG(warning) << "mic: could not confirm that the default audio source was restored"sv;
+        } else {
+          BOOST_LOG(info) << "mic: default audio source restored"sv;
+        }
+        policy_.finished();
       }
 
       /**
@@ -346,20 +474,7 @@ namespace platf::pw_mic {
         if (loop_) {
           pw_thread_loop_lock(loop_);
 
-          if (default_set_ && metadata_) {
-            if (previous_default_) {
-              const auto &[type, value] = *previous_default_;
-              pw_metadata_set_property(metadata_, PW_ID_CORE, kDefaultSourceKey.data(), type.empty() ? nullptr : type.c_str(), value.c_str());
-            } else {
-              // There was no configured default before; clear the key so WirePlumber chooses again.
-              pw_metadata_set_property(metadata_, PW_ID_CORE, kDefaultSourceKey.data(), nullptr, nullptr);
-            }
-            default_set_ = false;
-            if (core_) {
-              roundtrip();  // flush the change before the connection goes away
-            }
-            BOOST_LOG(info) << "mic: default audio source restored"sv;
-          }
+          restore_default_source();
 
           if (stream_) {
             spa_hook_remove(&stream_listener_);
@@ -368,6 +483,7 @@ namespace platf::pw_mic {
           }
           if (metadata_) {
             spa_hook_remove(&metadata_listener_);
+            spa_hook_remove(&metadata_proxy_listener_);
             pw_proxy_destroy(reinterpret_cast<pw_proxy *>(metadata_));
             metadata_ = nullptr;
           }
@@ -421,32 +537,53 @@ namespace platf::pw_mic {
           return ev;
         }();
 
+        static const pw_proxy_events proxy_events = []() {
+          pw_proxy_events ev = {};
+          ev.version = PW_VERSION_PROXY_EVENTS;
+          ev.removed = &pipewire_mic_sink_t::on_metadata_removed;
+          ev.destroy = &pipewire_mic_sink_t::on_metadata_destroyed;
+          return ev;
+        }();
+
         self->metadata_ = static_cast<pw_metadata *>(pw_registry_bind(self->registry_, id, type, PW_VERSION_METADATA, 0));
         if (self->metadata_) {
+          self->policy_.metadata_bound();
           pw_metadata_add_listener(self->metadata_, &self->metadata_listener_, &metadata_events, self);
+          pw_proxy_add_listener(reinterpret_cast<pw_proxy *>(self->metadata_), &self->metadata_proxy_listener_, &proxy_events, self);
         }
+      }
+
+      static void on_metadata_removed(void *data) {
+        // The session manager went away: the proxy is unusable, release it. A restarted manager exports a new object
+        // that is bound again from the registry callback.
+        auto *self = static_cast<pipewire_mic_sink_t *>(data);
+        if (self->metadata_) {
+          pw_proxy_destroy(reinterpret_cast<pw_proxy *>(self->metadata_));
+        }
+      }
+
+      static void on_metadata_destroyed(void *data) {
+        auto *self = static_cast<pipewire_mic_sink_t *>(data);
+        spa_hook_remove(&self->metadata_listener_);
+        spa_hook_remove(&self->metadata_proxy_listener_);
+        self->metadata_ = nullptr;
       }
 
       static int on_metadata_property(void *data, uint32_t subject, const char *key, const char *type, const char *value) {
         auto *self = static_cast<pipewire_mic_sink_t *>(data);
 
-        // Only the configured default before our own write matters; later changes are ignored.
-        if (self->default_set_ || subject != PW_ID_CORE) {
+        // Observed for the whole session: what is configured at teardown decides whether anything is restored.
+        if (subject != PW_ID_CORE) {
           return 0;
         }
 
         if (!key) {
-          self->previous_default_.reset();  // the whole subject was cleared
+          self->policy_.observe(std::nullopt);  // every key of the subject was cleared
         } else if (std::strcmp(key, kDefaultSourceKey.data()) == 0) {
-          if (value && names_own_node(value)) {
-            // A session that was killed left our node configured as the default. Restoring that would
-            // pin a dead device forever, so treat it as "no default was configured".
-            BOOST_LOG(warning) << "mic: ignoring a stale default audio source left behind by an earlier session: "sv << value;
-            self->previous_default_.reset();
-          } else if (value) {
-            self->previous_default_ = std::pair<std::string, std::string> {type ? type : "", value};
+          if (value) {
+            self->policy_.observe(configured_value_t {type ? type : "", value});
           } else {
-            self->previous_default_.reset();
+            self->policy_.observe(std::nullopt);
           }
         }
         return 0;
@@ -500,11 +637,11 @@ namespace platf::pw_mic {
       spa_hook core_listener_ {};  ///< Core event listener.
       spa_hook registry_listener_ {};  ///< Registry event listener.
       spa_hook metadata_listener_ {};  ///< Metadata event listener.
+      spa_hook metadata_proxy_listener_ {};  ///< Metadata proxy lifetime listener.
       spa_hook stream_listener_ {};  ///< Stream event listener.
       int pending_sync_ = 0;  ///< Sequence of the outstanding core sync.
       bool done_ = false;  ///< Set by the core `done` event for `pending_sync_`.
-      bool default_set_ = false;  ///< Whether this object changed the default source.
-      std::optional<std::pair<std::string, std::string>> previous_default_;  ///< (type, value) of the default before the switch; empty when none was configured.
+      default_source_policy_t policy_;  ///< Decides when the default may be switched and what to restore.
       ring_t ring_ {kRingCapacityFrames};  ///< PCM waiting to be pulled by PipeWire.
     };
 

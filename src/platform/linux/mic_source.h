@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -83,6 +84,108 @@ namespace platf::pw_mic {
    * @return true when the value's `name` is exactly kNodeName.
    */
   bool names_own_node(std::string_view value);
+
+  /**
+   * @brief A value of the `default.configured.audio.source` metadata key.
+   */
+  struct configured_value_t {
+    std::string type;  ///< Metadata value type, normally `Spa:String:JSON`; empty when none was given.
+    std::string value;  ///< Metadata value, normally JSON such as `{"name":"..."}`.
+
+    bool operator==(const configured_value_t &) const = default;
+  };
+
+  /**
+   * @brief Decides when the virtual microphone may become the default source and what to do at teardown.
+   *
+   * Pure bookkeeping driven by the metadata events that the PipeWire glue observes; it never talks to PipeWire.
+   * The rules it enforces:
+   * - The default is only touched once the current value is known: a synchronisation barrier must have completed
+   *   after the metadata object was bound. An unknown value is never overwritten.
+   * - The value before the switch is remembered as either a configured value or confirmed absence. A value that
+   *   names this virtual microphone (left behind by a killed session) counts as absence.
+   * - Metadata keeps being observed for the whole session. At teardown the previous state is restored only while
+   *   the virtual microphone still owns the default; a source the user chose in the meantime, or an explicit
+   *   clearing by the user, is left alone.
+   */
+  class default_source_policy_t {
+  public:
+    /**
+     * @brief What the glue must do at teardown.
+     */
+    enum class restore_e {
+      nothing,  ///< Leave the default as it is.
+      set_previous,  ///< Write `previous` back.
+      clear,  ///< Delete the key: no default was configured before the switch.
+    };
+
+    /**
+     * @brief Result of restore_plan().
+     */
+    struct restore_plan_t {
+      restore_e action;  ///< What to do.
+      configured_value_t previous;  ///< The value to write back (only with `set_previous`).
+    };
+
+    /**
+     * @brief The metadata object was (re)bound; whatever was known about its content is stale now.
+     */
+    void metadata_bound();
+
+    /**
+     * @brief A property event for the configured default source key.
+     * @param value The new value, or `std::nullopt` when the key was removed.
+     */
+    void observe(std::optional<configured_value_t> value);
+
+    /**
+     * @brief A sync barrier completed after the metadata object was bound: every event sent so far was observed.
+     */
+    void synchronized();
+
+    /**
+     * @brief Whether the default may be switched now.
+     * @return true when the current value is known and no switch has happened yet.
+     */
+    bool may_switch() const;
+
+    /**
+     * @brief The switch is about to be written: remember the value to restore.
+     */
+    void begin_switch();
+
+    /**
+     * @brief What to do at teardown, given everything observed so far.
+     */
+    restore_plan_t restore_plan() const;
+
+    /**
+     * @brief The teardown action was carried out (or was not needed); nothing remains to restore.
+     */
+    void finished();
+
+    /**
+     * @brief Whether a switch was attempted and not yet finished.
+     */
+    bool switched() const;
+
+    /**
+     * @brief The value that was configured before the switch; `std::nullopt` means none was configured.
+     */
+    std::optional<configured_value_t> previous() const;
+
+    /**
+     * @brief The latest observed value of the key; `std::nullopt` means the key is absent.
+     */
+    std::optional<configured_value_t> current() const;
+
+  private:
+    std::optional<configured_value_t> current_;  ///< Latest observed value of the key; empty when absent.
+    std::optional<configured_value_t> previous_;  ///< Value before our switch; empty when none was configured.
+    bool known_ = false;  ///< `current_` reflects the server state (a barrier completed after binding).
+    bool switched_ = false;  ///< A switch was attempted and its restoration has not finished.
+    bool used_ = false;  ///< A switch was attempted at some point; a session switches at most once.
+  };
 
   /**
    * @brief Format the value WirePlumber expects for a default-node metadata key.

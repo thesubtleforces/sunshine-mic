@@ -11,7 +11,9 @@
   #include <cmath>
   #include <cstddef>
   #include <cstdint>
+  #include <optional>
   #include <string>
+  #include <string_view>
   #include <thread>
 
   // lib includes
@@ -167,6 +169,157 @@ TEST(MicOwnDefaultTest, RejectsEmptyOrMalformedValues) {
   EXPECT_FALSE(platf::pw_mic::names_own_node("moonlight-mic"));
   EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":})"));
   EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":"moonlight-mic)"));
+}
+
+namespace {
+  using platf::pw_mic::configured_value_t;
+  using platf::pw_mic::default_source_policy_t;
+  using restore_e = default_source_policy_t::restore_e;
+
+  configured_value_t json_value(std::string_view name) {
+    return {"Spa:String:JSON", std::string {R"({"name":")"} + std::string {name} + R"("})"};
+  }
+
+  configured_value_t ours() {
+    return json_value(platf::pw_mic::kNodeName);
+  }
+
+  /**
+   * @brief A policy that observed `initial` (or no key at all) and completed its first synchronisation.
+   */
+  default_source_policy_t synchronized_policy(const std::optional<configured_value_t> &initial) {
+    default_source_policy_t policy;
+    policy.metadata_bound();
+    if (initial) {
+      policy.observe(*initial);
+    }
+    policy.synchronized();
+    return policy;
+  }
+}  // namespace
+
+TEST(MicDefaultSourcePolicyTest, RestoresAPreviouslyConfiguredSource) {
+  auto policy = synchronized_policy(json_value("alsa_input.usb-headset"));
+  ASSERT_TRUE(policy.may_switch());
+
+  policy.begin_switch();
+  policy.observe(ours());  // the echo of our own write
+
+  const auto plan = policy.restore_plan();
+  EXPECT_EQ(plan.action, restore_e::set_previous);
+  EXPECT_EQ(plan.previous, json_value("alsa_input.usb-headset"));
+}
+
+TEST(MicDefaultSourcePolicyTest, ClearsTheKeyWhenNoSourceWasConfigured) {
+  auto policy = synchronized_policy(std::nullopt);  // confirmed absence
+  ASSERT_TRUE(policy.may_switch());
+
+  policy.begin_switch();
+  policy.observe(ours());
+
+  EXPECT_FALSE(policy.previous().has_value());
+  EXPECT_EQ(policy.restore_plan().action, restore_e::clear);
+}
+
+TEST(MicDefaultSourcePolicyTest, NeverSwitchesBeforeTheValueIsKnown) {
+  default_source_policy_t policy;
+  EXPECT_FALSE(policy.may_switch());
+
+  policy.metadata_bound();
+  policy.observe(json_value("alsa_input.usb-headset"));
+  EXPECT_FALSE(policy.may_switch());  // bound and observed, but no barrier has completed yet
+
+  policy.synchronized();
+  EXPECT_TRUE(policy.may_switch());
+}
+
+TEST(MicDefaultSourcePolicyTest, KeepsASourceTheUserChoseDuringTheSession) {
+  auto policy = synchronized_policy(json_value("alsa_input.usb-headset"));
+  policy.begin_switch();
+  policy.observe(ours());
+
+  policy.observe(json_value("bluez_input.airpods"));  // the user picked another microphone
+
+  EXPECT_EQ(policy.restore_plan().action, restore_e::nothing);
+}
+
+TEST(MicDefaultSourcePolicyTest, KeepsAnExplicitClearingByTheUser) {
+  auto policy = synchronized_policy(json_value("alsa_input.usb-headset"));
+  policy.begin_switch();
+  policy.observe(ours());
+
+  policy.observe(std::nullopt);  // the user cleared the configured default
+
+  EXPECT_EQ(policy.restore_plan().action, restore_e::nothing);
+}
+
+TEST(MicDefaultSourcePolicyTest, TreatsAStaleOwnNodeAsNoPreviousSource) {
+  auto policy = synchronized_policy(ours());  // left behind by a session that was killed
+  ASSERT_TRUE(policy.may_switch());
+
+  policy.begin_switch();
+  policy.observe(ours());
+
+  EXPECT_FALSE(policy.previous().has_value());
+  EXPECT_EQ(policy.restore_plan().action, restore_e::clear);
+}
+
+TEST(MicDefaultSourcePolicyTest, DoesNothingWhenTheSwitchNeverLanded) {
+  auto policy = synchronized_policy(json_value("alsa_input.usb-headset"));
+  policy.begin_switch();
+  // The write failed or was never applied: the key still holds the user's value.
+
+  EXPECT_EQ(policy.restore_plan().action, restore_e::nothing);
+}
+
+TEST(MicDefaultSourcePolicyTest, CapturesTheLatestValueBeforeTheWrite) {
+  auto policy = synchronized_policy(json_value("alsa_input.first"));
+  policy.observe(json_value("alsa_input.second"));  // changed after the snapshot, before our write
+
+  policy.begin_switch();
+  policy.observe(ours());
+
+  const auto plan = policy.restore_plan();
+  EXPECT_EQ(plan.action, restore_e::set_previous);
+  EXPECT_EQ(plan.previous, json_value("alsa_input.second"));
+}
+
+TEST(MicDefaultSourcePolicyTest, ReboundMetadataMustBeSynchronisedAgainBeforeRestoring) {
+  auto policy = synchronized_policy(json_value("alsa_input.usb-headset"));
+  policy.begin_switch();
+  policy.observe(ours());
+
+  policy.metadata_bound();  // the session manager restarted and a new metadata object appeared
+  EXPECT_EQ(policy.restore_plan().action, restore_e::nothing);  // content unknown until it is observed
+
+  policy.observe(ours());  // the new object still carries our value
+  policy.synchronized();
+  EXPECT_EQ(policy.restore_plan().action, restore_e::set_previous);
+}
+
+TEST(MicDefaultSourcePolicyTest, ReboundMetadataWithoutTheKeyLeavesItAlone) {
+  auto policy = synchronized_policy(json_value("alsa_input.usb-headset"));
+  policy.begin_switch();
+  policy.observe(ours());
+
+  policy.metadata_bound();
+  policy.synchronized();  // the new object has no such key
+
+  EXPECT_EQ(policy.restore_plan().action, restore_e::nothing);
+}
+
+TEST(MicDefaultSourcePolicyTest, FinishedMeansNothingRemainsToRestore) {
+  auto policy = synchronized_policy(std::nullopt);
+  policy.begin_switch();
+  policy.observe(ours());
+  ASSERT_EQ(policy.restore_plan().action, restore_e::clear);
+  ASSERT_TRUE(policy.switched());
+
+  policy.finished();
+
+  EXPECT_FALSE(policy.switched());
+  EXPECT_EQ(policy.restore_plan().action, restore_e::nothing);
+  EXPECT_FALSE(policy.may_switch());  // a session switches at most once
 }
 
 /**
