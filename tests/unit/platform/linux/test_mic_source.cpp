@@ -7,14 +7,18 @@
 
   // standard includes
   #include <array>
+  #include <chrono>
+  #include <cmath>
   #include <cstddef>
   #include <cstdint>
   #include <string>
+  #include <thread>
 
   // lib includes
   #include <gtest/gtest.h>
 
   // local includes
+  #include "src/platform/common.h"
   #include "src/platform/linux/mic_source.h"
 
 using platf::pw_mic::ring_t;
@@ -138,6 +142,31 @@ TEST(MicDefaultSourceJsonTest, FormatsNodeName) {
 
 TEST(MicDefaultSourceJsonTest, EscapesQuotesAndBackslashes) {
   EXPECT_EQ(platf::pw_mic::default_source_json("a\"b\\c"), R"({"name":"a\"b\\c"})");
+}
+
+/**
+ * Manual integration test against the running PipeWire session; it is disabled by default because it
+ * briefly makes "Moonlight Mic" the default audio source. Run it with
+ *   test_sunshine --gtest_also_run_disabled_tests --gtest_filter='MicSinkManualTest.*'
+ * and inspect `wpctl status` / `pw-record --target moonlight-mic` from another terminal while it runs.
+ */
+TEST(MicSinkManualTest, DISABLED_PublishesTone) {
+  auto sink = platf::mic_sink_create({platf::pw_mic::kSampleRate, platf::pw_mic::kChannels, true});
+  if (!sink) {
+    GTEST_SKIP() << "PipeWire is not available";
+  }
+
+  // Ten seconds of a 440 Hz tone, written in real time as 20 ms frames.
+  constexpr std::size_t frame_samples = 960;
+  std::array<std::int16_t, frame_samples> frame {};
+  std::size_t position = 0;
+  for (int n = 0; n < 500; ++n) {
+    for (auto &sample : frame) {
+      sample = static_cast<std::int16_t>(8000.0 * std::sin(2.0 * M_PI * 440.0 * static_cast<double>(position++) / 48000.0));
+    }
+    EXPECT_EQ(sink->write(frame.data(), frame.size()), 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
 }
 
 #endif  // __linux__
