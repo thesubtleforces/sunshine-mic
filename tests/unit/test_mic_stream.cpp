@@ -365,6 +365,31 @@ TEST_F(MicStreamTest, SessionWithoutVirtualMicrophoneDropsAudioQuietly) {
   EXPECT_EQ(captured_->created, 0);
 }
 
+TEST_F(MicStreamTest, BindFailureSkipsTheVirtualMicrophoneAndTheNextRegistrationRetries) {
+  // Something else already holds the microphone port.
+  asio::io_context io;
+  udp::socket blocker {io};
+  boost::system::error_code ec;
+  blocker.open(udp::v4(), ec);
+  blocker.bind(udp::endpoint {udp::v4(), mic_port()}, ec);
+  ASSERT_FALSE(ec) << ec.message();
+
+  // No audio can ever arrive, so no silent device may become the system default source.
+  mic::register_session(1, loopback());
+  EXPECT_EQ(captured_->created, 0);
+
+  mic::unregister_session(1);  // clean even though nothing was bound
+  EXPECT_EQ(captured_->destroyed, 0);
+
+  // Once the port is free the next registration sets everything up.
+  blocker.close(ec);
+  mic::register_session(1, loopback());
+  EXPECT_EQ(captured_->created, 1);
+
+  send_frame(0);
+  ASSERT_TRUE(wait_for(kFrameSamples));
+}
+
 TEST_F(MicStreamTest, UnregisterIsIdempotent) {
   mic::unregister_session(42);  // never registered
   mic::register_session(1, loopback());

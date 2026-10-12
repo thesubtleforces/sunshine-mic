@@ -313,8 +313,12 @@ namespace mic {
       factory = s.sink_factory;
     }
 
+    // Bind the port before creating anything the user can see: without a socket no audio can ever arrive,
+    // and a virtual microphone would become the (silent) system default source.
+    const bool socket_ready = s.sock.is_open() || open_socket(s);
+
     // Creating the virtual microphone talks to PipeWire, so it happens outside the data lock.
-    if (need_sink) {
+    if (socket_ready && need_sink) {
       const platf::mic_sink_config_t sink_config {static_cast<std::uint32_t>(kSampleRate), kChannels, config::audio.mic_default_source};
       std::shared_ptr<platf::mic_sink_t> sink = factory ? factory(sink_config) : platf::mic_sink_create(sink_config);
       if (!sink) {
@@ -327,7 +331,7 @@ namespace mic {
       }
     }
 
-    if (!s.sock.is_open() && open_socket(s)) {
+    if (socket_ready && !s.thread.joinable()) {
       arm_receive(s);
       s.thread = std::thread {[&s]() {
         platf::set_thread_name("mic::recv");
