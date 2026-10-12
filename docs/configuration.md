@@ -932,6 +932,9 @@ supported on the current platform.
             Sunshine decodes the audio and exposes it as the PipeWire audio source "Moonlight Mic". The stream uses
             UDP port base + 12 (48001 with the default port).
             @note{This option is only supported on Linux.}
+            @warning{The microphone stream is neither authenticated nor encrypted, and datagrams are routed by the
+            client's source address only. Use it with one known client over Tailscale/WireGuard. See
+            docs/mic_streaming.md.}
         </td>
     </tr>
     <tr>
@@ -956,7 +959,8 @@ supported on the current platform.
         <td colspan="2">
             While a client microphone is connected, make "Moonlight Mic" the system default audio source so that
             applications using the default input (dictation tools, voice chat) record from it. The previous default is
-            restored when the last microphone session ends.
+            restored when the last microphone session ends, unless it was changed or cleared in the meantime.
+            Disable it for a first trial: the virtual device is still created but nothing else changes.
             @note{This option is only supported on Linux.}
         </td>
     </tr>
