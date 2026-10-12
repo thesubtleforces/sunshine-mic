@@ -144,6 +144,31 @@ TEST(MicDefaultSourceJsonTest, EscapesQuotesAndBackslashes) {
   EXPECT_EQ(platf::pw_mic::default_source_json("a\"b\\c"), R"({"name":"a\"b\\c"})");
 }
 
+TEST(MicOwnDefaultTest, RecognisesOwnNodeName) {
+  EXPECT_TRUE(platf::pw_mic::names_own_node(R"({"name":"moonlight-mic"})"));
+  // What the code itself writes must always be recognised again.
+  EXPECT_TRUE(platf::pw_mic::names_own_node(platf::pw_mic::default_source_json(platf::pw_mic::kNodeName)));
+}
+
+TEST(MicOwnDefaultTest, ToleratesWhitespace) {
+  EXPECT_TRUE(platf::pw_mic::names_own_node(R"({ "name" : "moonlight-mic" })"));
+  EXPECT_TRUE(platf::pw_mic::names_own_node("{\n  \"name\": \"moonlight-mic\"\n}"));
+}
+
+TEST(MicOwnDefaultTest, IgnoresOtherNodes) {
+  EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":"alsa_input.pci-0000_00_1f.3.analog-stereo"})"));
+  // A name that merely starts with ours is somebody else's device.
+  EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":"moonlight-mic-2"})"));
+  EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":"my-moonlight-mic"})"));
+}
+
+TEST(MicOwnDefaultTest, RejectsEmptyOrMalformedValues) {
+  EXPECT_FALSE(platf::pw_mic::names_own_node(""));
+  EXPECT_FALSE(platf::pw_mic::names_own_node("moonlight-mic"));
+  EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":})"));
+  EXPECT_FALSE(platf::pw_mic::names_own_node(R"({"name":"moonlight-mic)"));
+}
+
 /**
  * Manual integration test against the running PipeWire session; it is disabled by default because it
  * briefly makes "Moonlight Mic" the default audio source. Run it with

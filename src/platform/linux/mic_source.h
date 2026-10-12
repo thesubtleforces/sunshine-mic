@@ -74,6 +74,17 @@ namespace platf::pw_mic {
   };
 
   /**
+   * @brief Whether a `default.configured.audio.source` value names this virtual microphone.
+   *
+   * A session that was killed, or lost its PipeWire connection, can leave our own node configured as the
+   * default. That is not a user preference and must never be restored as the "previous" default.
+   *
+   * @param value Metadata value, normally JSON such as `{"name":"moonlight-mic"}`; may be empty or malformed.
+   * @return true when the value's `name` is exactly kNodeName.
+   */
+  bool names_own_node(std::string_view value);
+
+  /**
    * @brief Format the value WirePlumber expects for a default-node metadata key.
    * @param node_name PipeWire `node.name`.
    * @return JSON such as `{"name":"moonlight-mic"}`, with `"` and `\` escaped.

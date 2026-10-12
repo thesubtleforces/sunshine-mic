@@ -92,6 +92,38 @@ namespace platf::pw_mic {
     read_pos_ = write_pos_;
   }
 
+  bool names_own_node(std::string_view value) {
+    constexpr std::string_view key = "\"name\"";
+
+    const auto key_pos = value.find(key);
+    if (key_pos == std::string_view::npos) {
+      return false;
+    }
+
+    auto pos = key_pos + key.size();
+    const auto skip_whitespace = [&]() {
+      while (pos < value.size() && (value[pos] == ' ' || value[pos] == '\t' || value[pos] == '\n' || value[pos] == '\r')) {
+        ++pos;
+      }
+    };
+
+    skip_whitespace();
+    if (pos >= value.size() || value[pos] != ':') {
+      return false;
+    }
+    ++pos;
+
+    skip_whitespace();
+    if (pos >= value.size() || value[pos] != '"') {
+      return false;
+    }
+    ++pos;
+
+    // The name must match exactly: it has to be followed by the closing quote.
+    const auto rest = value.substr(pos);
+    return rest.size() > kNodeName.size() && rest.substr(0, kNodeName.size()) == kNodeName && rest[kNodeName.size()] == '"';
+  }
+
   std::string default_source_json(std::string_view node_name) {
     std::string out {R"({"name":")"};
     for (const char c : node_name) {
@@ -406,7 +438,12 @@ namespace platf::pw_mic {
         if (!key) {
           self->previous_default_.reset();  // the whole subject was cleared
         } else if (std::strcmp(key, kDefaultSourceKey.data()) == 0) {
-          if (value) {
+          if (value && names_own_node(value)) {
+            // A session that was killed left our node configured as the default. Restoring that would
+            // pin a dead device forever, so treat it as "no default was configured".
+            BOOST_LOG(warning) << "mic: ignoring a stale default audio source left behind by an earlier session: "sv << value;
+            self->previous_default_.reset();
+          } else if (value) {
             self->previous_default_ = std::pair<std::string, std::string> {type ? type : "", value};
           } else {
             self->previous_default_.reset();
