@@ -178,7 +178,7 @@ namespace mic {
           const auto now = std::chrono::steady_clock::now();
           if (now - s.last_ambiguous_log > kForeignLogInterval) {
             s.last_ambiguous_log = now;
-            BOOST_LOG(warning) << "mic: "sv << sharing << " microphone sessions of different clients share "sv << owner->peer.to_string()
+            BOOST_LOG(warning) << "mic: ambiguous microphone ownership: "sv << sharing << " sessions of different clients share "sv << owner->peer.to_string()
                                << " and cannot be told apart; microphone audio from this address is blocked until one of them ends"sv;
           }
           ++owner->dropped;
@@ -401,8 +401,8 @@ namespace mic {
         return session.second.peer == normalized_peer;
       });
       if (sharing > 1) {
-        BOOST_LOG(warning) << "mic: "sv << sharing << " microphone sessions of different clients share "sv << normalized_peer.to_string()
-                           << "; microphone audio from this address is blocked until one of them ends"sv;
+        BOOST_LOG(warning) << "mic: ambiguous microphone ownership: "sv << sharing << " sessions of different clients share "sv << normalized_peer.to_string()
+                           << " and cannot be told apart; microphone audio from this address is blocked until one of them ends"sv;
       }
 
       need_sink = !s.sink;
