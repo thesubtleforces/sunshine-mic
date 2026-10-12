@@ -10,10 +10,15 @@
 
 // standard includes
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 
 // lib includes
 #include <boost/asio/ip/address.hpp>
+
+// local includes
+#include "platform/common.h"
 
 namespace mic {
 
@@ -59,5 +64,16 @@ namespace mic {
    * @param launch_session_id RTSP launch-session ID passed to register_session(). Unknown IDs are ignored.
    */
   void unregister_session(std::uint32_t launch_session_id);
+
+  /**
+   * @brief Factory for the host virtual microphone; the default is platf::mic_sink_create().
+   */
+  using sink_factory_t = std::function<std::unique_ptr<platf::mic_sink_t>(const platf::mic_sink_config_t &)>;
+
+  /**
+   * @brief Replace the virtual microphone factory so tests can observe the decoded audio.
+   * @param factory The replacement; an empty function restores the platform default.
+   */
+  void set_sink_factory_for_testing(sink_factory_t factory);
 
 }  // namespace mic

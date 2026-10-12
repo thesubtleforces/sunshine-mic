@@ -28,6 +28,7 @@ extern "C" {
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
+#include "mic_stream.h"
 #include "network.h"
 #include "platform/common.h"
 #include "process.h"
@@ -2226,6 +2227,9 @@ namespace stream {
         task_pool.cancel(force_kill);
       });
 
+      // Release the client microphone (socket, virtual device, default source) first; this does not block.
+      mic::unregister_session(session.launch_session_id);
+
       BOOST_LOG(debug) << "Waiting for video to end..."sv;
       session.videoThread.join();
       BOOST_LOG(debug) << "Waiting for audio to end..."sv;
@@ -2299,6 +2303,10 @@ namespace stream {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
         system_tray::update_tray_playing(proc::proc.get_last_run_app_name());
 #endif
+      }
+
+      if (session.config.enable_mic) {
+        mic::register_session(session.launch_session_id, addr);
       }
 
       return 0;
