@@ -914,6 +914,10 @@ namespace rtsp_stream {
    * @param req RTSP request message.
    */
   void cmd_describe(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
+    // Every handshake begins here, and all RTSP connections of one launch share this state, so a microphone SETUP
+    // from an earlier, abandoned attempt must not carry over into this one.
+    session.setup_mic = false;
+
     OPTION_ITEM option {};
 
     // I know these string literals will not be modified
@@ -1164,6 +1168,7 @@ namespace rtsp_stream {
       config.videoQosType = (int) util::from_view(args.at("x-nv-vqos[0].qosTrafficType"sv));
       config.encryptionFlagsEnabled = (uint32_t) util::from_view(args.at("x-ss-general.encryptionEnabled"sv));
       config.enable_mic = session.setup_mic;
+      config.mic_client_id = session.client_cert;
 
       // Legacy clients use nvFeatureFlags to indicate support for audio encryption
       if (util::from_view(args.at("x-nv-general.featureFlags"sv)) & 0x20) {

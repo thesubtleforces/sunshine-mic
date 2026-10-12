@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -29,77 +30,198 @@
 #include <src/mic_packet.h>
 #include <src/mic_stream.h>
 
-using mic::classify_sequence;
 using mic::seq_action_e;
+using mic::sequence_tracker_t;
+
+namespace {
+  /**
+   * @brief A tracker whose last decoded packet is `last`.
+   */
+  sequence_tracker_t tracker_at(std::uint16_t last) {
+    sequence_tracker_t tracker;
+    tracker.accept(last);
+    return tracker;
+  }
+
+  /**
+   * @brief Feed one datagram the way the receive path does: classify, then commit it when it will be decoded.
+   */
+  mic::seq_decision_t step(sequence_tracker_t &tracker, std::uint16_t seq) {
+    const auto decision = tracker.classify(seq);
+    if (decision.action != seq_action_e::drop) {
+      tracker.accept(seq);
+    }
+    return decision;
+  }
+}  // namespace
 
 TEST(MicSequenceTest, FirstPacketAccepted) {
-  const auto d = classify_sequence(std::nullopt, 1234);
+  sequence_tracker_t tracker;
+  const auto d = tracker.classify(1234);
   EXPECT_EQ(d.action, seq_action_e::accept);
   EXPECT_EQ(d.plc_frames, 0);
 }
 
 TEST(MicSequenceTest, InOrderAccepted) {
-  const auto d = classify_sequence(std::uint16_t {41}, 42);
+  auto tracker = tracker_at(41);
+  const auto d = tracker.classify(42);
   EXPECT_EQ(d.action, seq_action_e::accept);
   EXPECT_EQ(d.plc_frames, 0);
 }
 
 TEST(MicSequenceTest, WrapAroundAccepted) {
   // 65535 -> 0 is the next packet, not a client restart.
-  const auto d = classify_sequence(std::uint16_t {65535}, 0);
+  auto tracker = tracker_at(65535);
+  const auto d = tracker.classify(0);
   EXPECT_EQ(d.action, seq_action_e::accept);
   EXPECT_EQ(d.plc_frames, 0);
 }
 
 TEST(MicSequenceTest, SmallGapTriggersPlc) {
-  const auto two = classify_sequence(std::uint16_t {5}, 8);
-  EXPECT_EQ(two.action, seq_action_e::accept);
-  EXPECT_EQ(two.plc_frames, 2);
+  auto two = tracker_at(5);
+  const auto d2 = two.classify(8);
+  EXPECT_EQ(d2.action, seq_action_e::accept);
+  EXPECT_EQ(d2.plc_frames, 2);
 
   // The largest gap that is still concealed.
-  const auto max = classify_sequence(std::uint16_t {5}, 11);
-  EXPECT_EQ(max.action, seq_action_e::accept);
-  EXPECT_EQ(max.plc_frames, mic::kMaxPlcFrames);
+  auto max = tracker_at(5);
+  const auto d5 = max.classify(11);
+  EXPECT_EQ(d5.action, seq_action_e::accept);
+  EXPECT_EQ(d5.plc_frames, mic::kMaxPlcFrames);
 }
 
 TEST(MicSequenceTest, LargeGapResyncs) {
-  const auto d = classify_sequence(std::uint16_t {5}, 12);
+  auto tracker = tracker_at(5);
+  const auto d = tracker.classify(12);
   EXPECT_EQ(d.action, seq_action_e::resync);
   EXPECT_EQ(d.plc_frames, 0);
 }
 
 TEST(MicSequenceTest, DuplicateDropped) {
-  const auto d = classify_sequence(std::uint16_t {5}, 5);
-  EXPECT_EQ(d.action, seq_action_e::drop);
-  EXPECT_EQ(d.plc_frames, 0);
-}
+  auto tracker = tracker_at(5);
+  EXPECT_EQ(tracker.classify(5).action, seq_action_e::drop);
 
-TEST(MicSequenceTest, DuplicateOfZeroDropped) {
   // A repeated packet 0 is a duplicate, not a client restart.
-  const auto d = classify_sequence(std::uint16_t {0}, 0);
-  EXPECT_EQ(d.action, seq_action_e::drop);
+  auto zero = tracker_at(0);
+  EXPECT_EQ(zero.classify(0).action, seq_action_e::drop);
 }
 
 TEST(MicSequenceTest, LateDropped) {
-  const auto slightly_late = classify_sequence(std::uint16_t {5}, 3);
-  EXPECT_EQ(slightly_late.action, seq_action_e::drop);
+  auto slightly_late = tracker_at(5);
+  EXPECT_EQ(slightly_late.classify(3).action, seq_action_e::drop);
 
   // Late across the wrap point: 65530 is 11 packets behind 5.
-  const auto late_across_wrap = classify_sequence(std::uint16_t {5}, 65530);
-  EXPECT_EQ(late_across_wrap.action, seq_action_e::drop);
+  auto across_wrap = tracker_at(5);
+  EXPECT_EQ(across_wrap.classify(65530).action, seq_action_e::drop);
 }
 
-TEST(MicSequenceTest, ZeroAfterToggleResyncs) {
+TEST(MicSequenceTest, ZeroAfterToggleResyncsImmediately) {
   // The client restarts its counter at 0 whenever the user toggles the microphone.
-  const auto d = classify_sequence(std::uint16_t {1234}, 0);
+  auto tracker = tracker_at(1234);
+  const auto d = tracker.classify(0);
   EXPECT_EQ(d.action, seq_action_e::resync);
   EXPECT_EQ(d.plc_frames, 0);
 }
 
-TEST(MicSequenceTest, FarBehindResyncs) {
-  const auto d = classify_sequence(std::uint16_t {100}, 40000);
-  EXPECT_EQ(d.action, seq_action_e::resync);
-  EXPECT_EQ(d.plc_frames, 0);
+TEST(MicSequenceTest, SingleStrayFarBehindPacketIsDropped) {
+  // One arbitrary old packet must not be admitted or restart anything.
+  auto tracker = tracker_at(100);
+  EXPECT_EQ(tracker.classify(40000).action, seq_action_e::drop);
+  EXPECT_EQ(tracker.classify(101).action, seq_action_e::accept);
+}
+
+TEST(MicSequenceTest, RestartThatLostPacketZeroRecoversAfterThreePackets) {
+  // Reproduces the defect: after 2000 packets a toggle whose first packet is lost used to drop 1..2000.
+  auto tracker = tracker_at(2000);
+  EXPECT_EQ(step(tracker, 1).action, seq_action_e::drop);
+  EXPECT_EQ(step(tracker, 2).action, seq_action_e::drop);
+  EXPECT_EQ(step(tracker, 3).action, seq_action_e::resync);
+  const auto next = step(tracker, 4);
+  EXPECT_EQ(next.action, seq_action_e::accept);
+  EXPECT_EQ(next.plc_frames, 0);
+}
+
+TEST(MicSequenceTest, RestartThatLostSeveralPacketsRecoversAfterThreePackets) {
+  auto tracker = tracker_at(2000);
+  EXPECT_EQ(step(tracker, 5).action, seq_action_e::drop);
+  EXPECT_EQ(step(tracker, 6).action, seq_action_e::drop);
+  EXPECT_EQ(step(tracker, 7).action, seq_action_e::resync);
+}
+
+TEST(MicSequenceTest, RestartFromHeavyLossRecoversWithinBoundedPackets) {
+  // Every other packet is lost after the toggle, so no three are consecutive.
+  auto tracker = tracker_at(2000);
+  int dropped = 0;
+  bool resynced = false;
+  for (std::uint16_t seq = 2; seq < 400 && !resynced; seq = static_cast<std::uint16_t>(seq + 2)) {
+    if (step(tracker, seq).action == seq_action_e::resync) {
+      resynced = true;
+    } else {
+      ++dropped;
+    }
+  }
+  EXPECT_TRUE(resynced);
+  EXPECT_EQ(dropped, 24);  // recovers on the 25th packet: bounded to half a second
+}
+
+TEST(MicSequenceTest, NearlyLatePacketsNeverStartARestart) {
+  // Consecutive packets only slightly behind are reordering, however many arrive.
+  auto tracker = tracker_at(2000);
+  for (std::uint16_t seq = 1990; seq < 2000; ++seq) {
+    EXPECT_EQ(step(tracker, seq).action, seq_action_e::drop) << "seq " << seq;
+  }
+  EXPECT_EQ(step(tracker, 2001).action, seq_action_e::accept);
+}
+
+TEST(MicSequenceTest, ReorderedPacketsAreHandledWithoutResync) {
+  sequence_tracker_t tracker;
+  EXPECT_EQ(step(tracker, 100).action, seq_action_e::accept);
+  EXPECT_EQ(step(tracker, 101).action, seq_action_e::accept);
+  const auto gap = step(tracker, 103);
+  EXPECT_EQ(gap.action, seq_action_e::accept);
+  EXPECT_EQ(gap.plc_frames, 1);
+  EXPECT_EQ(step(tracker, 102).action, seq_action_e::drop);  // arrived late
+  EXPECT_EQ(step(tracker, 104).action, seq_action_e::accept);
+}
+
+TEST(MicSequenceTest, InterleavedOldPacketsNeverRestart) {
+  auto tracker = tracker_at(2000);
+  for (std::uint16_t i = 0; i < 100; ++i) {
+    EXPECT_EQ(step(tracker, static_cast<std::uint16_t>(500 + i)).action, seq_action_e::drop);  // far-behind straggler
+    EXPECT_EQ(step(tracker, static_cast<std::uint16_t>(2001 + i)).action, seq_action_e::accept);  // stream keeps moving
+  }
+}
+
+TEST(MicSequenceTest, DuplicateFloodNeverRestarts) {
+  auto tracker = tracker_at(2000);
+  for (int i = 0; i < 200; ++i) {
+    EXPECT_EQ(step(tracker, 2000).action, seq_action_e::drop);  // duplicates of the current packet
+  }
+  for (int i = 0; i < 200; ++i) {
+    EXPECT_EQ(step(tracker, 500).action, seq_action_e::drop);  // the same old packet over and over
+  }
+  EXPECT_EQ(step(tracker, 2001).action, seq_action_e::accept);
+}
+
+TEST(MicSequenceTest, DescendingOldPacketsNeverRestart) {
+  auto tracker = tracker_at(2000);
+  for (std::uint16_t seq = 1500; seq > 1400; --seq) {
+    EXPECT_EQ(step(tracker, seq).action, seq_action_e::drop) << "seq " << seq;
+  }
+}
+
+TEST(MicSequenceTest, RestartAcrossTheWrapPointRecovers) {
+  // 65530 -> 1: the restarted counter is 7 ahead modulo 2^16, beyond the concealment window, so it resyncs at once.
+  auto tracker = tracker_at(65530);
+  EXPECT_EQ(step(tracker, 1).action, seq_action_e::resync);
+  EXPECT_EQ(step(tracker, 2).action, seq_action_e::accept);
+}
+
+TEST(MicSequenceTest, ResetForgetsTheStream) {
+  auto tracker = tracker_at(2000);
+  tracker.reset();
+  EXPECT_FALSE(tracker.last().has_value());
+  EXPECT_EQ(tracker.classify(7).action, seq_action_e::accept);
 }
 
 namespace {
@@ -109,6 +231,8 @@ namespace {
 
   constexpr std::uint16_t kTestBasePort = 38989;  ///< Keeps the tests clear of a running Sunshine; the mic port is base + 12.
   constexpr int kFrameSamples = 960;  ///< One 20 ms Opus frame at 48 kHz.
+  constexpr std::string_view kClientA = "client-a-certificate";  ///< Identity of one paired client.
+  constexpr std::string_view kClientB = "client-b-certificate";  ///< Identity of another paired client.
 
   /**
    * @brief Audio captured by the fake virtual microphone, shared with the test body.
@@ -254,7 +378,7 @@ namespace {
 }  // namespace
 
 TEST_F(MicStreamTest, DecodesDatagramsFromRegisteredPeer) {
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   for (std::uint16_t seq = 0; seq < 5; ++seq) {
     send_frame(seq);
   }
@@ -266,7 +390,7 @@ TEST_F(MicStreamTest, DecodesDatagramsFromRegisteredPeer) {
 }
 
 TEST_F(MicStreamTest, IgnoresDatagramsFromOtherAddresses) {
-  mic::register_session(1, asio::ip::make_address("192.0.2.10"));
+  mic::register_session(1, asio::ip::make_address("192.0.2.10"), kClientA);
   for (std::uint16_t seq = 0; seq < 3; ++seq) {
     send_frame(seq);
   }
@@ -276,7 +400,7 @@ TEST_F(MicStreamTest, IgnoresDatagramsFromOtherAddresses) {
 }
 
 TEST_F(MicStreamTest, ConcealsSmallSequenceGaps) {
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   send_frame(0);
   send_frame(1);
   send_frame(2);
@@ -290,7 +414,7 @@ TEST_F(MicStreamTest, ConcealsSmallSequenceGaps) {
 }
 
 TEST_F(MicStreamTest, ResyncsWhenTheClientRestartsItsCounter) {
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   for (std::uint16_t seq = 0; seq < 10; ++seq) {
     send_frame(seq);
   }
@@ -304,7 +428,7 @@ TEST_F(MicStreamTest, ResyncsWhenTheClientRestartsItsCounter) {
 }
 
 TEST_F(MicStreamTest, DropsDuplicateAndLatePackets) {
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   const auto f0 = encode_frame();
   const auto f1 = encode_frame();
   const auto f2 = encode_frame();
@@ -322,7 +446,7 @@ TEST_F(MicStreamTest, DropsDuplicateAndLatePackets) {
 }
 
 TEST_F(MicStreamTest, UnregisterReleasesSocketAndSink) {
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   EXPECT_EQ(captured_->created, 1);
 
   mic::unregister_session(1);
@@ -337,19 +461,88 @@ TEST_F(MicStreamTest, UnregisterReleasesSocketAndSink) {
   EXPECT_FALSE(ec) << ec.message();
 }
 
-TEST_F(MicStreamTest, NewestSessionOwnsTheMicrophoneAndTheOlderOneResumes) {
-  mic::register_session(1, loopback());
-  mic::register_session(2, loopback());
+TEST_F(MicStreamTest, NewestSessionOnAnotherAddressOwnsTheMicrophoneAndTheOlderOneResumes) {
+  mic::register_session(1, asio::ip::make_address("192.0.2.10"), kClientA);
+  mic::register_session(2, loopback(), kClientB);
   EXPECT_EQ(captured_->created, 1);  // both sessions share one virtual microphone
 
-  mic::unregister_session(2);
-  EXPECT_EQ(captured_->destroyed, 0);  // session 1 still holds it
-
-  send_frame(0);
+  send_frame(0);  // from loopback: session 2 owns the microphone
   ASSERT_TRUE(wait_for(kFrameSamples));
+
+  mic::unregister_session(2);
+  EXPECT_EQ(captured_->destroyed, 0);  // session 1 still holds the device
+
+  // Session 1 (another address) owns the microphone again, so loopback datagrams are not accepted.
+  const auto before = captured_->size();
+  send_frame(1);
+  std::this_thread::sleep_for(200ms);
+  EXPECT_EQ(captured_->size(), before);
 
   mic::unregister_session(1);
   EXPECT_EQ(captured_->destroyed, 1);
+}
+
+TEST_F(MicStreamTest, SameClientReconnectReplacesItsOlderSession) {
+  mic::register_session(1, loopback(), kClientA);
+  mic::register_session(2, loopback(), kClientA);  // the client reconnected before the old session was torn down
+  EXPECT_EQ(captured_->created, 1);
+
+  send_frame(0);  // not blocked as ambiguous: it is the same client
+  ASSERT_TRUE(wait_for(kFrameSamples));
+
+  mic::unregister_session(1);  // the superseded session is joined late and must not disturb the new one
+  EXPECT_EQ(captured_->destroyed, 0);
+  send_frame(1);
+  ASSERT_TRUE(wait_for(2 * kFrameSamples));
+
+  mic::unregister_session(2);
+  EXPECT_EQ(captured_->destroyed, 1);
+}
+
+TEST_F(MicStreamTest, DifferentClientsOnTheSameAddressFailClosed) {
+  mic::register_session(1, loopback(), kClientA);
+  mic::register_session(2, loopback(), kClientB);
+  EXPECT_EQ(captured_->created, 1);
+
+  for (std::uint16_t seq = 0; seq < 5; ++seq) {
+    send_frame(seq);
+  }
+  std::this_thread::sleep_for(300ms);
+  EXPECT_EQ(captured_->size(), 0u);  // who is speaking cannot be told, so nothing is played
+
+  mic::unregister_session(2);  // the ambiguity ends: session 1 is alone on this address
+  send_frame(5);
+  ASSERT_TRUE(wait_for(kFrameSamples));
+}
+
+TEST_F(MicStreamTest, SessionsWithUnknownIdentityOnTheSameAddressFailClosed) {
+  mic::register_session(1, loopback(), "");
+  mic::register_session(2, loopback(), "");
+
+  for (std::uint16_t seq = 0; seq < 3; ++seq) {
+    send_frame(seq);
+  }
+  std::this_thread::sleep_for(300ms);
+  EXPECT_EQ(captured_->size(), 0u);
+}
+
+TEST_F(MicStreamTest, RestartThatLostPacketZeroResumesWithinAFewPackets) {
+  mic::register_session(1, loopback(), kClientA);
+  for (std::uint16_t seq = 0; seq < 40; ++seq) {
+    send_frame(seq);
+  }
+  ASSERT_TRUE(wait_for(40 * kFrameSamples));
+
+  // The user toggles the microphone: the counter restarts but packet 0 is lost.
+  static_cast<void>(encode_frame());
+  for (std::uint16_t seq = 1; seq <= 10; ++seq) {
+    send_frame(seq);
+  }
+
+  // Packets 1 and 2 are held back as possible strays; 3 to 10 are decoded.
+  ASSERT_TRUE(wait_for(48 * kFrameSamples));
+  std::this_thread::sleep_for(100ms);
+  EXPECT_EQ(captured_->size(), 48u * kFrameSamples);
 }
 
 TEST_F(MicStreamTest, SessionWithoutVirtualMicrophoneDropsAudioQuietly) {
@@ -357,7 +550,7 @@ TEST_F(MicStreamTest, SessionWithoutVirtualMicrophoneDropsAudioQuietly) {
     return std::unique_ptr<platf::mic_sink_t> {};
   });
 
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   send_frame(0);
   std::this_thread::sleep_for(100ms);
   mic::unregister_session(1);  // must neither crash nor hang
@@ -375,7 +568,7 @@ TEST_F(MicStreamTest, BindFailureSkipsTheVirtualMicrophoneAndTheNextRegistration
   ASSERT_FALSE(ec) << ec.message();
 
   // No audio can ever arrive, so no silent device may become the system default source.
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   EXPECT_EQ(captured_->created, 0);
 
   mic::unregister_session(1);  // clean even though nothing was bound
@@ -383,7 +576,7 @@ TEST_F(MicStreamTest, BindFailureSkipsTheVirtualMicrophoneAndTheNextRegistration
 
   // Once the port is free the next registration sets everything up.
   blocker.close(ec);
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   EXPECT_EQ(captured_->created, 1);
 
   send_frame(0);
@@ -392,7 +585,7 @@ TEST_F(MicStreamTest, BindFailureSkipsTheVirtualMicrophoneAndTheNextRegistration
 
 TEST_F(MicStreamTest, UnregisterIsIdempotent) {
   mic::unregister_session(42);  // never registered
-  mic::register_session(1, loopback());
+  mic::register_session(1, loopback(), kClientA);
   mic::unregister_session(1);
   mic::unregister_session(1);
   EXPECT_EQ(captured_->destroyed, 1);

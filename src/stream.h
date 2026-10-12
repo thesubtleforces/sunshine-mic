@@ -40,6 +40,7 @@ namespace stream {
     uint32_t encryptionFlagsEnabled;  ///< Bitmask of GameStream encryption features enabled for the session.
 
     bool enable_mic = false;  ///< Whether the client issued SETUP for the microphone stream and the host accepts it.
+    std::string mic_client_id;  ///< Certificate (PEM) of the authenticated client; identifies its microphone sessions.
 
     std::optional<int> gcmap;  ///< Optional game-controller mapping override from the launch request.
   };

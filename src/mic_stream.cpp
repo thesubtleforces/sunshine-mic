@@ -4,6 +4,7 @@
  */
 
 // standard includes
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <map>
@@ -35,7 +36,10 @@ namespace mic {
     namespace asio = boost::asio;
     using udp = asio::ip::udp;
 
-    constexpr int kRestartDistance = 3000;  ///< A packet this far behind the last one is a client restart, not a late packet.
+    constexpr int kReorderWindow = 16;  ///< Packets this close behind the last one are late or reordered, never a restart.
+    constexpr int kRestartContiguous = 3;  ///< Consecutive far-behind packets that identify a counter restart.
+    constexpr int kRestartRunLength = 25;  ///< Increasing far-behind packets (gaps allowed) that identify a restart under heavy loss.
+    constexpr int kMaxRunGap = 16;  ///< Largest step between two packets of one restart candidate run.
     constexpr auto kStatsInterval = 10s;  ///< How often the receive counters are logged at debug level.
     constexpr auto kForeignLogInterval = 30s;  ///< How often datagrams from an unexpected address are logged.
 
@@ -54,8 +58,9 @@ namespace mic {
     struct entry_t {
       std::uint64_t order;  ///< Registration counter; the entry with the highest value owns the microphone.
       asio::ip::address peer;  ///< Normalised client address; microphone datagrams must come from it.
+      std::string client_id;  ///< Authenticated identity of the paired client; empty when unknown.
       std::unique_ptr<OpusDecoder, opus_decoder_deleter_t> decoder;  ///< 48 kHz mono decoder for this client's audio.
-      std::optional<std::uint16_t> last_seq;  ///< Last accepted sequence number.
+      sequence_tracker_t sequence;  ///< Sequence bookkeeping of this client's stream.
       int last_frame_samples = 960;  ///< Size of the last decoded frame; reused to conceal lost frames.
       std::uint64_t decoded = 0;  ///< Frames decoded.
       std::uint64_t concealed = 0;  ///< Frames synthesised to cover lost packets.
@@ -81,6 +86,7 @@ namespace mic {
       std::thread thread;  ///< The `mic::recv` thread; running exactly while `sock` is open.
       std::chrono::steady_clock::time_point last_stats;  ///< When the counters were last logged.
       std::chrono::steady_clock::time_point last_foreign_log;  ///< When an unexpected source was last logged.
+      std::chrono::steady_clock::time_point last_ambiguous_log;  ///< When an ambiguous address was last logged.
     };
 
     /**
@@ -163,12 +169,28 @@ namespace mic {
           return;
         }
 
+        // Sessions of different clients behind one address cannot be told apart (the packets carry no
+        // identity), so none of them is trusted until one of them ends.
+        const auto sharing = std::count_if(s.sessions.begin(), s.sessions.end(), [owner](const auto &session) {
+          return session.second.peer == owner->peer;
+        });
+        if (sharing > 1) {
+          const auto now = std::chrono::steady_clock::now();
+          if (now - s.last_ambiguous_log > kForeignLogInterval) {
+            s.last_ambiguous_log = now;
+            BOOST_LOG(warning) << "mic: "sv << sharing << " microphone sessions of different clients share "sv << owner->peer.to_string()
+                               << " and cannot be told apart; microphone audio from this address is blocked until one of them ends"sv;
+          }
+          ++owner->dropped;
+          return;
+        }
+
         if (!packet) {
           ++owner->invalid;
           return;
         }
 
-        const auto decision = classify_sequence(owner->last_seq, packet->sequence);
+        const auto decision = owner->sequence.classify(packet->sequence);
         if (decision.action == seq_action_e::drop) {
           ++owner->dropped;
           return;
@@ -206,7 +228,7 @@ namespace mic {
         offset += static_cast<std::size_t>(n);
         pcm.resize(offset);
 
-        owner->last_seq = packet->sequence;
+        owner->sequence.accept(packet->sequence);
         owner->last_frame_samples = n;
         ++owner->decoded;
         sink = s.sink;
@@ -259,34 +281,87 @@ namespace mic {
     }
   }  // namespace
 
-  seq_decision_t classify_sequence(std::optional<std::uint16_t> last_seq, std::uint16_t seq) {
-    if (!last_seq) {
+  seq_decision_t sequence_tracker_t::classify(std::uint16_t seq) {
+    if (!last_) {
       return {seq_action_e::accept, 0};
     }
 
     // Signed distance in sequence space, so the 16-bit wrap needs no special case.
-    const auto distance = static_cast<std::int16_t>(static_cast<std::uint16_t>(seq - *last_seq));
+    const auto distance = static_cast<std::int16_t>(static_cast<std::uint16_t>(seq - *last_));
 
     if (distance == 0) {
-      return {seq_action_e::drop, 0};  // exact duplicate
+      return {seq_action_e::drop, 0};  // duplicate of the last decoded packet
     }
 
     if (distance > 0) {
+      // The stream is moving forward, so whatever looked like a restart candidate was an old straggler.
+      run_length_ = 0;
+      run_contiguous_ = 0;
+
       if (distance <= 1 + kMaxPlcFrames) {
         return {seq_action_e::accept, distance - 1};
       }
+      return {seq_action_e::resync, 0};  // a long outage, or a restarted counter that landed ahead
+    }
+
+    // Behind the last decoded packet. The client restarts its counter at 0 whenever the user toggles the
+    // microphone: a packet 0 is the explicit marker for that.
+    if (seq == 0) {
       return {seq_action_e::resync, 0};
     }
 
-    // Behind the last accepted packet: either the client restarted its counter
-    // (it does so whenever the user toggles the microphone) or the packet is late.
-    if (seq == 0 || distance < -kRestartDistance) {
+    // Slightly behind is lateness or reordering, however many such packets arrive.
+    if (distance >= -kReorderWindow) {
+      return {seq_action_e::drop, 0};
+    }
+
+    // Far behind: possibly a restart whose first packet was lost. Only a run of increasing sequence numbers
+    // counts, so a stray old packet, a repeated packet or a replay of descending numbers never qualifies.
+    const auto start_run = [&]() {
+      run_last_ = seq;
+      run_length_ = 1;
+      run_contiguous_ = 1;
+    };
+
+    if (run_length_ == 0) {
+      start_run();
+    } else {
+      const auto step = static_cast<std::int16_t>(static_cast<std::uint16_t>(seq - run_last_));
+      if (step <= 0) {
+        return {seq_action_e::drop, 0};  // repeated or out of order inside the run: ignore it, keep the run
+      }
+      if (step > kMaxRunGap) {
+        start_run();  // unrelated to the run so far
+      } else {
+        ++run_length_;
+        run_contiguous_ = step == 1 ? run_contiguous_ + 1 : 1;
+        run_last_ = seq;
+      }
+    }
+
+    if (run_contiguous_ >= kRestartContiguous || run_length_ >= kRestartRunLength) {
       return {seq_action_e::resync, 0};
     }
     return {seq_action_e::drop, 0};
   }
 
-  void register_session(std::uint32_t launch_session_id, const boost::asio::ip::address &peer) {
+  void sequence_tracker_t::accept(std::uint16_t seq) {
+    last_ = seq;
+    run_length_ = 0;
+    run_contiguous_ = 0;
+  }
+
+  void sequence_tracker_t::reset() {
+    last_.reset();
+    run_length_ = 0;
+    run_contiguous_ = 0;
+  }
+
+  std::optional<std::uint16_t> sequence_tracker_t::last() const {
+    return last_;
+  }
+
+  void register_session(std::uint32_t launch_session_id, const boost::asio::ip::address &peer, std::string_view client_id) {
     auto &s = state();
     std::lock_guard lifecycle {s.lifecycle_mutex};
 
@@ -302,12 +377,33 @@ namespace mic {
     {
       std::lock_guard lock {s.mutex};
 
+      const auto normalized_peer = net::normalize_address(peer);
+
+      // The same paired client reconnecting or resuming from the same address replaces its earlier session,
+      // which may still be waiting for its own teardown (its later unregistration is then a no-op).
+      for (auto it = s.sessions.begin(); it != s.sessions.end();) {
+        if (it->first != launch_session_id && !client_id.empty() && it->second.client_id == client_id && it->second.peer == normalized_peer) {
+          BOOST_LOG(info) << "mic: session "sv << launch_session_id << " replaces session "sv << it->first << " of the same client"sv;
+          it = s.sessions.erase(it);
+        } else {
+          ++it;
+        }
+      }
+
       if (const auto *previous = find_owner(s)) {
         BOOST_LOG(info) << "mic: session "sv << launch_session_id << " takes over the microphone (order "sv << previous->order << ")"sv;
       }
 
-      s.sessions.insert_or_assign(launch_session_id, entry_t {s.next_order++, net::normalize_address(peer), std::move(decoder)});
-      BOOST_LOG(info) << "mic: session "sv << launch_session_id << " registered for "sv << peer.to_string();
+      s.sessions.insert_or_assign(launch_session_id, entry_t {s.next_order++, normalized_peer, std::string {client_id}, std::move(decoder)});
+      BOOST_LOG(info) << "mic: session "sv << launch_session_id << " registered for "sv << peer.to_string() << (client_id.empty() ? " (client identity unknown)"sv : ""sv);
+
+      const auto sharing = std::count_if(s.sessions.begin(), s.sessions.end(), [&normalized_peer](const auto &session) {
+        return session.second.peer == normalized_peer;
+      });
+      if (sharing > 1) {
+        BOOST_LOG(warning) << "mic: "sv << sharing << " microphone sessions of different clients share "sv << normalized_peer.to_string()
+                           << "; microphone audio from this address is blocked until one of them ends"sv;
+      }
 
       need_sink = !s.sink;
       factory = s.sink_factory;

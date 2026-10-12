@@ -2306,7 +2306,7 @@ namespace stream {
       }
 
       if (session.config.enable_mic) {
-        mic::register_session(session.launch_session_id, addr);
+        mic::register_session(session.launch_session_id, addr, session.config.mic_client_id);
       }
 
       return 0;

@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string_view>
 
 // lib includes
 #include <boost/asio/ip/address.hpp>
@@ -37,7 +38,7 @@ namespace mic {
   };
 
   /**
-   * @brief Result of classify_sequence().
+   * @brief Result of sequence_tracker_t::classify().
    */
   struct seq_decision_t {
     seq_action_e action;  ///< Disposition of the packet.
@@ -45,19 +46,63 @@ namespace mic {
   };
 
   /**
-   * @brief Wrap-aware classification of a sequence number against the last accepted one.
-   * @param last_seq Last accepted sequence number, or `std::nullopt` before the first packet.
-   * @param seq Sequence number of the incoming packet.
-   * @return Whether to accept, drop or resync, and how many frames of loss to conceal.
+   * @brief Tracks the sequence numbers of one client's microphone stream.
+   *
+   * Decides, per datagram, whether to decode it, drop it or restart the decoder, and how many lost frames to
+   * conceal first. The client restarts its 16-bit counter at 0 whenever the user toggles the microphone, and the
+   * first packet after a toggle may be lost, so a restart is recognised from a short run of consecutive packets
+   * that are far behind the last accepted one. Isolated late packets, reordering and duplicates never trigger it.
    */
-  seq_decision_t classify_sequence(std::optional<std::uint16_t> last_seq, std::uint16_t seq);
+  class sequence_tracker_t {
+  public:
+    /**
+     * @brief Classify the next datagram. Call exactly once per datagram.
+     * @param seq Sequence number from the packet header.
+     * @return Whether to accept, drop or resync, and how many frames of loss to conceal.
+     */
+    seq_decision_t classify(std::uint16_t seq);
+
+    /**
+     * @brief Record that a packet was decoded; it becomes the new reference and any restart candidate is cleared.
+     * @param seq Sequence number of the decoded packet.
+     */
+    void accept(std::uint16_t seq);
+
+    /**
+     * @brief Forget everything, as for a brand new stream.
+     */
+    void reset();
+
+    /**
+     * @brief Sequence number of the last decoded packet, if any.
+     */
+    std::optional<std::uint16_t> last() const;
+
+  private:
+    std::optional<std::uint16_t> last_;  ///< Last decoded sequence number.
+    std::uint16_t run_last_ = 0;  ///< Newest sequence number of the current restart candidate run.
+    int run_length_ = 0;  ///< Packets in the current run of increasing, far-behind sequence numbers.
+    int run_contiguous_ = 0;  ///< Trailing packets of the run whose numbers followed each other exactly.
+  };
 
   /**
    * @brief Start routing microphone packets from `peer` into the host virtual microphone.
+   *
+   * Ownership policy (the microphone wire format carries no session or client identity, so routing can only
+   * use the source IP address of the datagrams):
+   * - The most recently registered session owns the microphone; datagrams are accepted only from its address.
+   * - A session from the same client (same non-empty `client_id`) and the same address replaces its earlier
+   *   session: that is the client reconnecting or resuming.
+   * - Sessions of different, or unknown, clients on the same address cannot be told apart. While two such
+   *   sessions are registered no microphone audio from that address is accepted (fail closed); the audio
+   *   resumes when one of them ends.
+   * - A newer session from another address takes the microphone over; the older one resumes when it ends.
+   *
    * @param launch_session_id RTSP launch-session ID that identifies the stream session.
    * @param peer RTSP peer address of the client; microphone datagrams must come from this IP.
+   * @param client_id Authenticated identity of the paired client (its certificate); empty when unknown.
    */
-  void register_session(std::uint32_t launch_session_id, const boost::asio::ip::address &peer);
+  void register_session(std::uint32_t launch_session_id, const boost::asio::ip::address &peer, std::string_view client_id);
 
   /**
    * @brief Stop routing for a session; the last unregistration closes the socket and the virtual microphone.
