@@ -88,6 +88,14 @@ separate exact-candidate report as described in [RELEASING.md](RELEASING.md).
   helper subprocesses and runtime-loaded graphics/desktop libraries are not all visible to static ELF
   dependency analysis. The `gcc-libs` dependency supplies the observed libstdc++ runtime. Full candidate
   assembly, actual packaged receiver checks and final namcap review remain required.
+- [Hosted run 38459551806](https://github.com/thesubtleforces/sunshine-mic/actions/runs/38459551806)
+  verified the newly packaged binary's version/commit/reset hash and passed **23/23 receiver scenarios**
+  plus the packaged guard harness. The receiver executable SHA256 was
+  `1046f02bf14e1e4ec87c5c3cf01e402c082cdcb70a7eabba1742dd3ec3837887`.
+  Assembly then stopped at the source privacy scan: the workflow itself embedded the builder's log
+  directory. Log collection now resolves the account home through passwd; the unchanged scanner
+  reproduced the original failure and accepted the correction without an allowlist exception.
+  This PR build is not a complete candidate or a substitute for final push-to-`mic` evidence.
 
 Static reviews found and prompted corrections for incomplete activation recovery, user/root transaction races,
 direct-process diagnostic blind spots, socket verification exits, reset parser differentials, reset recovery

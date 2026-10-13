@@ -303,8 +303,8 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import pathlib, shutil
-          source = pathlib.Path('/home/builder/.cache/sunshine-mic/e2e-logs')
+          import pathlib, pwd, shutil
+          source = pathlib.Path(pwd.getpwnam('builder').pw_dir) / '.cache/sunshine-mic/e2e-logs'
           destination = pathlib.Path('ci-work/logs/receiver')
           if source.is_dir():
               for path in source.rglob('*'):

@@ -30,6 +30,8 @@ until the exact candidate passes disposable graphical-host and real iPad qualifi
   configuration home. Declare the observed direct runtime libraries and disable unused debug packaging.
 - Remove inherited Codecov bundle analysis and its dependency; diagnostic reports containing absolute
   build paths do not belong in the installed web assets.
+- Resolve the disposable builder's diagnostic directory through passwd rather than embedding a home
+  path in exported workflow source; preserve the strict source privacy scan without a new exception.
 - Introduce fork-specific product/support surfaces and protected installation, security and rollback guidance.
 
 These entries describe source changes, **not successful release qualification**. Diagnostic artifacts,
