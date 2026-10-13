@@ -2,17 +2,19 @@
 
 **NOT RELEASE QUALIFIED. Publication is on hold by maintainer choice.**
 
-There is no final candidate package/hash, immutable preview tag, published release, verified AUR entry,
-or official Omarchy package submission for this release. Do not use this record as the release workflow's
-qualification approval. Earlier development packages are not the candidate.
+No package is release-qualified. There is no immutable preview tag, published release, verified AUR entry,
+or official Omarchy package submission for this release. CI artifacts, if successfully assembled, are only
+build candidates. Do not use this preparation record as the release workflow's qualification approval.
+Earlier development packages are not the candidate; final run/hash and live qualification belong in a
+separate exact-candidate report as described in [RELEASING.md](RELEASING.md).
 
 ## Observed during implementation
 
 - Product templates rendered with real CMake `SUNSHINE_CONFIGURE_ONLY=ON` in an isolated staging directory.
   `desktop-file-validate` passed; `appstreamcli validate --no-net` passed with two pedantic notices.
 - README rendered through GitHub's Markdown API and observed in Chromium at 390 px width without page
-  overflow. Original 1280×640 social PNG was opened and visually inspected. This is local rendering,
-  not verification of the public fork's eventual default-branch surface or an installed Sunshine web UI.
+  overflow. Original 1280×640 social PNG was opened and visually inspected. This local rendering
+  did not qualify an installed Sunshine web UI.
 - No configured fal executable/client/environment-variable names were found by the artwork implementation;
   original SVG artwork was used. No product demonstration was generated or simulated.
 - `python3 tests/e2e/mic_guard_e2e.py` passed in private user/network/mount/PID namespaces:
@@ -49,6 +51,24 @@ qualification approval. Earlier development packages are not the candidate.
   source/provenance rejection tests. `actionlint` passed the three fork workflows; embedded Python compiled.
   Publication validation was executed without credentials and refused wrong repository, invalid tag,
   branch dispatch and unprotected tag before any API request. No publication workflow was dispatched.
+- After the workflow cutover commit, GitHub's default branch was changed to `mic`; fork status remained
+  true. About/homepage/topics, Issues and private vulnerability reporting were enabled and verified
+  through GitHub APIs. The [welcome/support issue](https://github.com/thesubtleforces/sunshine-mic/issues/1)
+  was created and pinned.
+- Actual public README and canonical guide were opened in Chromium at 390 px: no page-level horizontal
+  overflow; the original banner loaded. The public security policy and pinned support issue were visible.
+  Issue creation and private security submission routes correctly reached GitHub sign-in; authenticated
+  form rendering is not claimed. Issue YAML parsed locally.
+- GitHub repository search `sunshine omarchy microphone fork:true` returned this fork. This does not
+  imply ordinary fork-excluding search inclusion or future ranking.
+- Custom social-preview upload remains incomplete: no authenticated browser was available, and GitHub's
+  supported repository-update GraphQL input exposes no social-image field/mutation. The original PNG
+  is committed; `usesCustomOpenGraphImage` was observed false. Do not confuse the README banner with
+  the repository social-preview setting.
+- The three fork workflows are registered active. Active `mic` deletion/force-push restrictions and
+  maintainer-only `mic-v*` tag rules were configured; `community-preview` requires maintainer approval,
+  disallows admin bypass and allows only `mic-v*` tags. Required CI context is finalized after observing
+  the actual first check; no release approval or publication was exercised.
 
 Static reviews found and prompted corrections for incomplete activation recovery, user/root transaction races,
 direct-process diagnostic blind spots, socket verification exits, reset parser differentials, reset recovery
@@ -71,8 +91,8 @@ real systemd lifecycle behavior. The namespace harness covers only the boundarie
    verification and source/provenance hash comparison.
 8. Authorized AUR account/name availability and actual package discovery, recipe install and executable
    identity verification; separate real Omarchy build/watch/edge PR and maintainer approval gates.
-9. Actual public default-branch README, install/support/security routes, social-preview setting and installed
-   desktop/web surfaces checked after cutover. Search indexing must be reported separately.
+9. Authenticated issue/security form rendering, custom social-preview upload and installed desktop/web
+   surfaces. Public README/guide/security/support and fork-inclusive search have been observed above.
 
 The maintainer chose **Keep publication blocked** when offered a disposable target/VM qualification route.
 Continue implementation and isolated verification, but do not tag, publish binary/AUR packages or submit an
