@@ -96,6 +96,15 @@ separate exact-candidate report as described in [RELEASING.md](RELEASING.md).
   directory. Log collection now resolves the account home through passwd; the unchanged scanner
   reproduced the original failure and accepted the correction without an allowlist exception.
   This PR build is not a complete candidate or a substitute for final push-to-`mic` evidence.
+- [PR run 38463736878](https://github.com/thesubtleforces/sunshine-mic/actions/runs/38463736878)
+  passed the complete candidate workflow, including Corresponding Source and downstream export.
+  [Push run 38468440042](https://github.com/thesubtleforces/sunshine-mic/actions/runs/38468440042)
+  subsequently stopped at a real HTTP 404 from the GCC Sourceware archive endpoint. The exact same
+  GCC commit was fetched from `gcc-mirror/gcc`; all 158,909 file contents/link targets and normalized
+  modes matched the earlier checksum-verified source export. The actual source/notices scanner
+  accepted the mirror using the existing three exact public-fixture exceptions. Its independently
+  measured archive SHA256 is now pinned; no compiler/runtime binding or source gate was relaxed.
+  A successful exact push-to-`mic` candidate is still required.
 
 Static reviews found and prompted corrections for incomplete activation recovery, user/root transaction races,
 direct-process diagnostic blind spots, socket verification exits, reset parser differentials, reset recovery

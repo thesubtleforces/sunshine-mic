@@ -307,10 +307,10 @@
     },
     {
       "name": "GCC",
-      "repository": "https://forge.sourceware.org/gcc/gcc",
+      "repository": "https://github.com/gcc-mirror/gcc",
       "revision": "d564253eb6c859e266d3cae18e82fb4db9a88316",
-      "url": "https://forge.sourceware.org/gcc/gcc/archive/d564253eb6c859e266d3cae18e82fb4db9a88316.tar.gz",
-      "sha256": "8d6265638382ef76ec6be2d9582be4bc86ebc57e6274171e4c6c7c8ed04a05ab",
+      "url": "https://codeload.github.com/gcc-mirror/gcc/tar.gz/d564253eb6c859e266d3cae18e82fb4db9a88316",
+      "sha256": "263fcf4d3c770bfd8b724a9b64c8a35fd50dcf669f4fb8736b00db53c552e067",
       "notices": [
         "COPYING",
         "COPYING.LIB",
@@ -408,6 +408,7 @@
       "archive_directory": "/usr/lib/gcc/x86_64-pc-linux-gnu/16",
       "package_commit": "https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/commit/13b07516f792b0b11ef818300f9d7a9341f31b5b",
       "gcc_commit": "https://forge.sourceware.org/gcc/gcc/commit/d564253eb6c859e266d3cae18e82fb4db9a88316",
+      "archive_mirror_verification": "The Sourceware archive endpoint returned HTTP 404 during push-to-mic qualification. The same immutable GCC commit is available from gcc-mirror/gcc. All 158909 source file contents/link targets and assembler-normalized modes match the checksum-verified earlier Sourceware export in CI run 38463736878. The GitHub tarball's extra group-write bits are removed by the existing 0644/0755 archive normalization; compiler/runtime bindings are unchanged.",
       "source_version": "gcc/BASE-VER is 16.2.1; gcc/DATESTAMP is 20260810; gcc/DEV-PHASE is empty in the downloaded exact GCC archive.",
       "recipe_correspondence": "The immutable Arch recipe declares pkgver=16.2.1+r23+gd564253eb6c8, pkgrel=1 and the exact GCC commit above. pacman ownership identifies both installed runtime archives and /usr/bin/c++ as that gcc package. This records local source correspondence, not a reproduced compiler build or final CI compiler qualification.",
       "preparation": "Included PKGBUILD changes gcc/config/i386/t-linux64 from lib64 to lib for m64, applies gcc-ada-repro.patch with -Np0 and tune_branch_prediction_cost.patch with -Np1, and retains complete configure/build/package commands. All four extra source-file SHA256 values below match the immutable recipe.",

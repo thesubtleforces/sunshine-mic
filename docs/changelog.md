@@ -32,6 +32,9 @@ until the exact candidate passes disposable graphical-host and real iPad qualifi
   build paths do not belong in the installed web assets.
 - Resolve the disposable builder's diagnostic directory through passwd rather than embedding a home
   path in exported workflow source; preserve the strict source privacy scan without a new exception.
+- Pin the exact GCC source archive on its public GitHub mirror after the Sourceware archive endpoint
+  returned 404. Verify all source contents and normalized modes against the earlier audited export;
+  retain the same compiler revision, runtime hashes and source/privacy gates.
 - Introduce fork-specific product/support surfaces and protected installation, security and rollback guidance.
 
 These entries describe source changes, **not successful release qualification**. Diagnostic artifacts,
