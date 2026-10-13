@@ -63,7 +63,6 @@ jobs:
       - name: Prepare fresh public-source build
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]]
           mkdir -p ci-work/pkg ci-work/logs ci-work/runtime-archives ci-work/extracted
           cp packaging/omarchy/PKGBUILD packaging/omarchy/sunshine.install ci-work/pkg/
           chown -R builder:builder "$GITHUB_WORKSPACE"
@@ -71,8 +70,11 @@ jobs:
           # anonymously by makepkg from the recipe's public, pinned inputs.
           sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
             GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
-            GIT_ASKPASS=/bin/false GIT_ALLOW_PROTOCOL=https \
+            GIT_ASKPASS=/bin/false GIT_ALLOW_PROTOCOL=https SOURCE_COMMIT="$SOURCE_COMMIT" \
             bash -euo pipefail -c '
+              # Verify as the actual checkout owner, not container root against
+              # a runner-owned bind mount; do not disable Git ownership checks.
+              [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]]
               cd ci-work/pkg
               makepkg --printsrcinfo > ../logs/public-default.SRCINFO
               namcap PKGBUILD 2>&1 | tee ../logs/namcap-recipe.log

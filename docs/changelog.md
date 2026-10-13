@@ -19,6 +19,8 @@ until the exact candidate passes disposable graphical-host and real iPad qualifi
   packaged management tools, preserved Sunshine replacement identities and no installation-time opt-in.
 - Add candidate-only Arch automation, isolated receiver/guard coverage, Corresponding Source assembly,
   provenance/checksums and a separately approved, immutable preview publication workflow.
+- Verify CI checkout identity as its unprivileged builder owner after the ownership handoff, avoiding
+  container-root access to a runner-owned bind mount without weakening Git's ownership checks.
 - Introduce fork-specific product/support surfaces and protected installation, security and rollback guidance.
 
 These entries describe source changes, **not successful release qualification**. Diagnostic artifacts,
