@@ -19,8 +19,9 @@ introduced:
 | qiin2333 `moonlight-qt` (AUR: `moonlight-qt-qiin2333`) | Linux, Windows, macOS |
 | qiin2333 `moonlight-android` | Android |
 
-Compatibility of this host with VoidLink is **not yet proven**; it is the acceptance gate for a real trial. Turn the
-client's microphone option on **before** connecting; the client negotiates the stream when the session starts.
+VoidLink compatibility was confirmed in **one** live acceptance session on one host/client pair (see
+[Live acceptance](#live-acceptance-one-session)); it has not been tested beyond that. Turn the client's microphone
+option on **before** connecting; the client negotiates the stream when the session starts.
 
 ## What the host does
 
@@ -50,6 +51,10 @@ client's microphone option on **before** connecting; the client negotiates the s
   speech. If a dictation tool types its output (for example Voxtype with `output.mode = "type"`), injected audio
   becomes keystrokes in the focused window — including a terminal. Dictate into a scratch text editor, not a
   terminal, while the microphone is connected.
+- **Tested only behind a restrictive host guard.** The live acceptance ran with a host firewall rule set in place that
+  let UDP 48001 through only from the one client's tailnet address on the Tailscale interface and dropped every other
+  source and interface, IPv4 and IPv6. Nothing in this fork makes the microphone stream safe on its own; without such
+  a restriction the only control is the application's source-address check described above.
 - **Do not widen the firewall.** Allow the microphone port for exactly the one client you use (see
   [Deployment](#deployment-one-client-over-tailscale)); never for whole private ranges.
 - **Main-stream approval is not microphone approval.** A client that is paired and allowed to stream can send
@@ -109,6 +114,11 @@ explicitly, but nothing else in the desktop changes.
 | `mic_default_source` | `enabled` | Make "Moonlight Mic" the default audio source while a client microphone is connected. |
 
 Both are Linux-only and are available in the web UI under **Audio/Video**.
+
+**Both default to `enabled` in the code**, so a fresh install of this fork accepts a microphone session from any paired
+client and, with `mic_default_source`, switches the default input for its duration. For a first trial set both to
+`disabled` in `sunshine.conf` and enable `stream_mic` only after the network restriction has been verified (see
+[Deployment](#deployment-one-client-over-tailscale)).
 
 ## Deployment: one client over Tailscale
 
@@ -171,8 +181,8 @@ A 13-byte variant with a 16-bit type of `0x5504` is also accepted. Any valid Opu
 - Isolated end-to-end harness: `tests/e2e/mic_e2e.py` runs the real `sunshine` binary in a private user, network
   and mount namespace with a private PipeWire daemon and a synthetic Moonlight client (HTTPS launch, RTSP
   `SETUP`/`ANNOUNCE`, ENet control attach, UDP Opus, recording from the virtual source). See `tests/e2e/README.md`.
-- Not covered by automation: a real VoidLink/iPad session (the acceptance gate), Windows/macOS builds, NAT,
-  encrypted main streams.
+- Not covered by automation: Windows/macOS builds, NAT, encrypted main streams. A real VoidLink/iPad session was run
+  by hand; see [Live acceptance](#live-acceptance-one-session).
 
 ### Evidence (2026-10-12)
 
@@ -182,11 +192,46 @@ A 13-byte variant with a 16-bit type of `0x5504` is also accepted. Any valid Opu
 | PipeWire glue against a private daemon (`MicSinkPipeWireTest`) | switch and restore a previous source; delete the key when none was configured; keep a source the user chose mid-session; keep an explicit clearing; ignore a stale own node; leave the default alone when switching is disabled; work without a `default` metadata object; bounded teardown when the daemon dies |
 | `tests/e2e/mic_e2e.py` against the packaged `sunshine` executable | 20/20 scenarios: `baseline`, `previous-default`, `mic-disabled`, `default-disabled`, `toggle-restart`, `toggle-restart-lost-first`, `reconnect`, `reconnect-concurrent`, `no-packets`, `port-blocked`, `fresh-launch`, `sticky-setup`, `killed-host`, `user-replaced-default`, `user-cleared-default`, `foreign-source-ip`, `announce-attributes`, `pending-launch`, `ambiguous-same-ip`, `same-client-supersede` |
 | Package lint (`appstreamcli` 1.2.0, `appstream-util` 0.8.4, `desktop-file-validate` 0.28) | metainfo and desktop files validate |
+| Live acceptance with VoidLink on an iPad | one session, passed; see below |
 
 Findings that the harness reproduced before the fixes, and now guards against: a restart that loses packet 0 after
 hundreds of packets stayed silent for as long as the old counter had run; a user's mid-session default source was
 overwritten at teardown; a microphone SETUP from an abandoned RTSP attempt leaked into the next attempt of the same
 launch; two clients on one address were both accepted.
+
+### Live acceptance (one session)
+
+One real session, run by hand after the packaged build below was installed, on one host and one client:
+
+- **Host:** Arch/Omarchy, Hyprland (Wayland), Intel iGPU with VAAPI, running the `sunshine-mic` package built from
+  commit `2d8eb97a`. Commits made on this branch after that one change documentation only; the installed executable
+  is the one built from `2d8eb97a`, which is also the commit its `--version` output prints.
+- **Client:** an iPad running VoidLink, over Tailscale (a direct path, about 9 ms round trip, not relayed).
+- **Configuration:** the restrictive host guard described above was active. Automatic default-source switching
+  (`mic_default_source`) was **off** for the session, the saved Sunshine configuration still has both microphone
+  options disabled, and the microphone stream was enabled for the running service by a runtime override. "Moonlight
+  Mic" was made the dictation input through a manual source preference, not by this fork's default-source switching.
+- **Result:** dictation from the iPad microphone through a local streaming speech recognizer (Parakeet) worked; the
+  words appeared while speaking, before the recording was stopped. At the end of the session video and dictation were
+  both reported as working by the person running it.
+- **Disconnect and reconnect:** a read-only watcher saw UDP 48001 and the "Moonlight Mic" source disappear on
+  disconnect, the effective default input fall back to the physical microphone, and both come back, with Moonlight Mic
+  as the default input, on reconnect. That default was the manual preference above: **automatic switching was not
+  exercised live**; it is covered by the private-daemon tests only.
+- **Video (informational; this fork does not touch the video path):** 2752x2064 at 120 fps, HEVC encoded with Intel
+  VAAPI; no host encoder settings were changed. After client-side changes the *negotiated* video bitrate rose from
+  about 7.3 Mbps to about 71.0 Mbps, which is higher than the 40 Mbps that had been suggested; the setting the client
+  actually applied is not recorded here. Audio was negotiated at 512 kbps stereo in total. These are negotiated
+  session values, not measurements of network throughput.
+
+**Open caveat.** During the trial there was an episode of microphone silence. Zero microphone datagrams were arriving at
+the host (the guard's packet counters did not move), and a full restart of the client app followed by a reconnect
+restored the input. The root cause is **not established**: it was not shown whether the client, the network path or the
+receiver was responsible, and this document does not claim a bug on either side.
+
+**Not covered by this acceptance:** automatic default-source switching in a live session, more than one client, hosts
+other than this one (the Windows and macOS builds have no microphone sink), and any run without the restrictive host
+guard.
 
 ## Development
 
