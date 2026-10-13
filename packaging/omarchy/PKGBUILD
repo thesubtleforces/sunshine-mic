@@ -1,3 +1,4 @@
+# Maintainer: thesubtleforces (https://github.com/thesubtleforces)
 # Reference: https://wiki.archlinux.org/title/PKGBUILD
 # Derived from Omarchy's Sunshine recipe; retain inherited licensing.
 # Community preview: no install/upgrade hook enables microphone forwarding.

@@ -42,11 +42,17 @@ jobs:
           pacman -Sy --needed --noconfirm archlinux-keyring
           pacman -Syu --needed --noconfirm base-devel git sudo python namcap \
             xorg-server-xvfb xorg-xauth pipewire pipewire-audio opus openssl \
-            iproute2 nftables util-linux shadow libarchive zstd
+            iproute2 nftables util-linux shadow libarchive libcap zstd
           useradd --create-home -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 builder
           usermod --add-subuids 100000-165535 --add-subgids 100000-165535 builder
           test -x /usr/bin/newuidmap
           test -x /usr/bin/newgidmap
+          # Restore Arch's narrow mapper file capabilities in this disposable
+          # container; an image import may omit security.capability xattrs.
+          getcap /usr/bin/newuidmap /usr/bin/newgidmap
+          setcap cap_setuid=ep /usr/bin/newuidmap
+          setcap cap_setgid=ep /usr/bin/newgidmap
+          getcap /usr/bin/newuidmap /usr/bin/newgidmap
           # makepkg --syncdeps alone uses this delegation; never install Sunshine.
           printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman\n' > /etc/sudoers.d/ci-builder
           chmod 0440 /etc/sudoers.d/ci-builder
