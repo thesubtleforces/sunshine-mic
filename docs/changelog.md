@@ -24,6 +24,8 @@ until the exact candidate passes disposable graphical-host and real iPad qualifi
 - Provision narrow Arch UID/GID mapper capabilities and permit nested namespaces on the disposable
   hosted CI runner. Real namespace/mount/packet verification remains mandatory; never apply these
   CI-only privilege settings to a production machine or fall back to an unisolated run.
+- Identify AppStream metadata as a development build with its actual version/build date, retaining both
+  metadata validators without implying a qualified release or package-manager publication.
 - Introduce fork-specific product/support surfaces and protected installation, security and rollback guidance.
 
 These entries describe source changes, **not successful release qualification**. Diagnostic artifacts,

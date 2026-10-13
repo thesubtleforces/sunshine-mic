@@ -21,6 +21,9 @@ elseif(UNIX)
     endif()
 
     # configure metadata file
+    # Date this development build, not a qualified public release. CMake respects
+    # SOURCE_DATE_EPOCH when the builder supplies it.
+    string(TIMESTAMP SUNSHINE_BUILD_DATE "%Y-%m-%d" UTC)
     configure_file(packaging/linux/${PROJECT_FQDN}.metainfo.xml ${PROJECT_FQDN}.metainfo.xml @ONLY)
 
     # configure service

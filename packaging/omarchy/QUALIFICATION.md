@@ -11,7 +11,10 @@ separate exact-candidate report as described in [RELEASING.md](RELEASING.md).
 ## Observed during implementation
 
 - Product templates rendered with real CMake `SUNSHINE_CONFIGURE_ONLY=ON` in an isolated staging directory.
-  `desktop-file-validate` passed; `appstreamcli validate --no-net` passed with two pedantic notices.
+  `desktop-file-validate`, `appstreamcli validate --no-net` and legacy `appstream-util validate` passed
+  after adding explicit development-build metadata. The current AppStream CLI reports one pedantic notice.
+  The legacy validator was extracted from a signature-verified Arch package into temporary user-owned
+  storage, not installed on the production host.
 - README rendered through GitHub's Markdown API and observed in Chromium at 390 px width without page
   overflow. Original 1280×640 social PNG was opened and visually inspected. This local rendering
   did not qualify an installed Sunshine web UI.
@@ -67,8 +70,18 @@ separate exact-candidate report as described in [RELEASING.md](RELEASING.md).
   the repository social-preview setting.
 - The three fork workflows are registered active. Active `mic` deletion/force-push restrictions and
   maintainer-only `mic-v*` tag rules were configured; `community-preview` requires maintainer approval,
-  disallows admin bypass and allows only `mic-v*` tags. Required CI context is finalized after observing
-  the actual first check; no release approval or publication was exercised.
+  disallows admin bypass and allows only `mic-v*` tags. The observed **Arch / Arch candidate** check,
+  bound to GitHub Actions app `15368`, is required by the active branch ruleset with no bypass actors.
+  No release approval or publication was exercised.
+- [Hosted run 38453390659](https://github.com/thesubtleforces/sunshine-mic/actions/runs/38453390659)
+  passed real namespace/firewall/transaction checks and 25 artifact contracts, retrieved/prepared public
+  sources and configured the real CUDA-enabled package build. It then failed legacy AppStream validation
+  because the template had no release entry; no package/candidate was uploaded. The development-build
+  metadata correction passed both actual validators locally; a complete new CI result is still required.
+- Initial recipe `namcap` warnings were reviewed: the explicit `x86_64` asset is intentional because
+  this preview declares only x86_64; the VCS/git warning is a static-analysis false positive (`git` is
+  declared in actual makepkg `.SRCINFO`). A missing maintainer tag was corrected. Package-level namcap
+  findings remain a separate build gate.
 
 Static reviews found and prompted corrections for incomplete activation recovery, user/root transaction races,
 direct-process diagnostic blind spots, socket verification exits, reset parser differentials, reset recovery

@@ -33,4 +33,12 @@
     <content_attribute id="money-purchasing">mild</content_attribute>
   </content_rating>
   <launchable type="desktop-id">@PROJECT_FQDN@.desktop</launchable>
+  <releases>
+    <release version="@PROJECT_VERSION@" date="@SUNSHINE_BUILD_DATE@" type="development">
+      <description>
+        <p>Development build of the independent Sunshine Mic community preview.
+          Build metadata does not imply release qualification or package-manager availability.</p>
+      </description>
+    </release>
+  </releases>
 </component>
