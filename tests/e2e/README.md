@@ -73,6 +73,7 @@ key), not their values, and are expected to fail on a binary whose defaults are 
 | `mic-disabled` | existing | `stream_mic = disabled`: SETUP mic still 200, no node, no socket, key untouched, session fine |
 | `defaults-absent` | new | both options **absent** from the config: the same assertions as `mic-disabled` (SETUP mic 200, no node, no socket, key untouched, no write of the default, session fine) |
 | `mic-only-optin` | new | `stream_mic = enabled`, `mic_default_source` absent: node + audio, the pre-set default source is never touched |
+| `cli-optin` | existing | the saved config says `disabled` for both, the command line says `stream_mic=enabled mic_default_source=disabled` (how a runtime override is applied): node + audio, the pre-set default is untouched |
 | `default-disabled` | existing | `mic_default_source = disabled`: node + audio, key never written (metadata monitor) |
 | `toggle-restart` | existing | stop, then resume from a new source port with the counter restarted at 0: audio flows again |
 | `toggle-restart-lost-first` | new | counter restarts at 1 (packet 0 lost) after ~335 packets: audio resumes within 5 packets; control phase proves the datagrams arrive |

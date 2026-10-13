@@ -1370,10 +1370,12 @@ def udp_port_free(port: int) -> bool:
 class SunshineInstance:
     """One configured sunshine process (config, apps, paired-client state) inside the scenario dir."""
 
-    def __init__(self, ctx: "ScenarioCtx", base: int, options: Dict[str, Optional[str]], idents: List[Identity]):
+    def __init__(self, ctx: "ScenarioCtx", base: int, options: Dict[str, Optional[str]], idents: List[Identity],
+                 args: Iterable[str] = ()):
         self.ctx = ctx
         self.base = base
         self.options = options
+        self.args = list(args)  # extra `name=value` command-line arguments, which override the config file
         self.idents = idents
         self.sdir = ctx.sdir
         self.appdata = os.path.join(self.sdir, "cfg", "sunshine")
@@ -1457,8 +1459,9 @@ class SunshineInstance:
         self.generation += 1
         out = open(self.stdout_path, "ab")
         env = self.ctx.sunshine_env()
-        self.child = Child("sunshine", [self.ctx.h.sunshine_bin, self.conf_path], env, cwd=self.sdir, stdout=out).start()
-        self.ctx.log(f"sunshine started pid={self.child.pid} base={self.base} opts={self.options}")
+        argv = [self.ctx.h.sunshine_bin, self.conf_path, *self.args]
+        self.child = Child("sunshine", argv, env, cwd=self.sdir, stdout=out).start()
+        self.ctx.log(f"sunshine started pid={self.child.pid} base={self.base} opts={self.options} args={self.args}")
 
         def ready():
             if not self.child.alive():
@@ -1807,10 +1810,10 @@ class ScenarioCtx:
         return self.pw
 
     def start_sunshine(self, options: Optional[Dict[str, Optional[str]]] = None, idents: Iterable[str] = ("A",),
-                       base: Optional[int] = None) -> SunshineInstance:
+                       base: Optional[int] = None, args: Iterable[str] = ()) -> SunshineInstance:
         opts = {"ping_timeout": self.sdef.ping_timeout_ms}
         opts.update(options or {})
-        sun = SunshineInstance(self, base or self.base_port, opts, [self.h.identities[i] for i in idents])
+        sun = SunshineInstance(self, base or self.base_port, opts, [self.h.identities[i] for i in idents], args)
         sun.start()
         self.suns.append(sun)
         return sun
@@ -2006,10 +2009,19 @@ def sc_previous_default(ctx: ScenarioCtx):
     ctx.note(f"metadata history of {DEFAULT_KEY}: {hist}")
 
 
+def conf_value(sun: SunshineInstance, key: str) -> Optional[str]:
+    """The value the generated sunshine.conf of this instance sets for the key, None when it is absent."""
+    with open(sun.conf_path) as fh:
+        for line in fh:
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == key:
+                return value.strip()
+    return None
+
+
 def conf_has_key(sun: SunshineInstance, key: str) -> bool:
     """True when the generated sunshine.conf of this instance sets the key (the harness never writes comments)."""
-    with open(sun.conf_path) as fh:
-        return any(line.split("=", 1)[0].strip() == key for line in fh if "=" in line)
+    return conf_value(sun, key) is not None
 
 
 def closed_mic_session(ctx: ScenarioCtx, options: Dict[str, Optional[str]]) -> None:
@@ -2067,6 +2079,31 @@ def sc_mic_only_optin(ctx: ScenarioCtx):
     c = ctx.client(sun)
     ctx.require(start_checks(ctx, sun, c.start(mic=True)), "session did not start")
     ctx.check("node appears", ctx.wait_node(True))
+    rep = tone_burst(ctx, c, 40)
+    ctx.check("node carries the tone", rep.active_ms(FREQ_A) >= 400, rep.describe())
+    ctx.check("previous default untouched during the session",
+              ctx.default_source() == (PREVIOUS_VALUE, DEFAULT_TYPE), f"got {ctx.default_source()}")
+    cancel_and_check_gone(ctx, c, sun)
+    final_state_checks(ctx, sun, (PREVIOUS_VALUE, DEFAULT_TYPE))
+    ctx.check("metadata monitor saw no write of the mic node",
+              (pw.monitor.writes_of(OWN_VALUE) == 0) if pw.monitor else True)
+
+
+@scenario("cli-optin", "existing",
+          "saved config says disabled, the command line says stream_mic=enabled (a runtime override): node + audio, "
+          "default key untouched")
+def sc_cli_optin(ctx: ScenarioCtx):
+    pw = ctx.start_pipewire()
+    pw.set_default_source(PREVIOUS_VALUE)
+    sun = ctx.start_sunshine({"stream_mic": "disabled", "mic_default_source": "disabled"},
+                             args=["stream_mic=enabled", "mic_default_source=disabled"])
+    ctx.check("saved config has stream_mic = disabled", conf_value(sun, "stream_mic") == "disabled",
+              f"got {conf_value(sun, 'stream_mic')!r}")
+    ctx.check("saved config has mic_default_source = disabled", conf_value(sun, "mic_default_source") == "disabled",
+              f"got {conf_value(sun, 'mic_default_source')!r}")
+    c = ctx.client(sun)
+    ctx.require(start_checks(ctx, sun, c.start(mic=True)), "session did not start")
+    ctx.check("node appears (command line wins over the saved config)", ctx.wait_node(True))
     rep = tone_burst(ctx, c, 40)
     ctx.check("node carries the tone", rep.active_ms(FREQ_A) >= 400, rep.describe())
     ctx.check("previous default untouched during the session",

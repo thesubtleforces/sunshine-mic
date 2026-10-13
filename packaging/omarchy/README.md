@@ -38,6 +38,24 @@ package was built and validated. That is expected and is not a reason to rebuild
 visible: record the package commit and the artifact's SHA256 together when you validate an artifact, and compare the
 commit printed by `--version` with the one you recorded, not with `HEAD`.
 
+## Revisions
+
+The branch `HEAD` is not a package. These are the builds, each from **one** commit:
+
+| Revision | Built from | Both microphone options default to | Status |
+|---|---|---|---|
+| `-2` | `2d8eb97a` | `enabled` | validated and live-accepted on the trial host; this is the revision that was installed |
+| `-3` | `9bde3fb8` | `disabled` | built; unit tests and the isolated end-to-end suite passed; **not installed** |
+
+- `-2`: executable `86c2019fd385b4626047611296e9ac5948100de7346af2faff399e9df7cae6e3`, package
+  `a863a084739d3b521c481d6fe0186d4b0151ba437a74002fc53d3c659016df94`
+- `-3`: executable `201df3e3e9ccd0b6bd50f871ad3ac843b9baa672dc7b032b818fa4b084c622cf`, package
+  `6bcc4a5807943f7172edd8b38cf17614ddd657b611cf13aa232d6e7ba86d563e`
+
+Commits after a package's commit (here: documentation and test-harness changes) are not part of that package.
+`-3` does not replace or relabel `-2`; an installed `-2` keeps its enabled defaults, so it must keep both options set
+explicitly in `sunshine.conf` or on the command line until it is replaced.
+
 ## Choose one artifact
 
 Builds of the same version with different `pkgrel` can sit next to each other, so **never install with a glob**

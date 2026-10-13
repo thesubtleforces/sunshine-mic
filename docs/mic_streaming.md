@@ -220,14 +220,30 @@ hundreds of packets stayed silent for as long as the old counter had run; a user
 overwritten at teardown; a microphone SETUP from an abandoned RTSP attempt leaked into the next attempt of the same
 launch; two clients on one address were both accepted.
 
+### Evidence for the defaults change (package revision `-3`, commit `9bde3fb8`)
+
+| Check | Result |
+|---|---|
+| `test_sunshine --gtest_filter='Mic*:ConfigConsistencyTest.*:LocaleConsistencyTest.*'`, binary built from the commit | 88 tests in 10 suites, all pass |
+| `test_sunshine`, every suite except the three that need real audio, HID and GPU devices | 656 tests in 93 suites: 653 pass, 3 skipped (tray and non-Windows UTF helpers), none fail |
+| `tests/e2e/mic_e2e.py` against the packaged `-3` executable | 23/23 scenarios, including the new `defaults-absent`, `mic-only-optin` and `cli-optin` |
+| the new scenarios against the `-2` executable (negative control) | `defaults-absent` and `mic-only-optin` **fail** (the UDP port is bound, the node is created, the default source is switched); `baseline`, `mic-disabled` and `cli-optin` pass. The scenarios detect the former defaults |
+| validators run by the package build (`appstreamcli`, `appstream-util`, `desktop-file-validate`) | validation successful (one pedantic note), `OK`, no findings |
+| built web UI | the shipped config page bundle has `stream_mic` and `mic_default_source` defaulting to `disabled`, and both checkboxes use `default: false` |
+| identity of the build | `sunshine --version` of the packaged executable prints commit `9bde3fb8a5d4729b98b88999a6a57ca5df9227c0` |
+
+Revision `-3` was built and tested in isolation only (private user, network and mount namespaces, private PipeWire
+daemon, synthetic client). It was **not** installed and never carried a real stream. The revision `-2` package
+validated and accepted below is unchanged; both are listed with their checksums in `packaging/omarchy/README.md`.
+
 ### Live acceptance (one session)
 
 One real session, run by hand after the packaged build below was installed, on one host and one client:
 
 - **Host:** Arch/Omarchy, Hyprland (Wayland), Intel iGPU with VAAPI, running the `sunshine-mic` package built from
   commit `2d8eb97a`; that is also the commit its `--version` output prints. Commits made on this branch after it, up
-  to `df0718ab`, changed documentation only. A later commit changes the code defaults of both options to
-  `disabled` (see [Defaults changed to disabled](#defaults-changed-to-disabled)); it was **not** part of this
+  to `df0718ab`, changed documentation only. The next commit, `9bde3fb8`, changes the code defaults of both options
+  to `disabled` (see [Defaults changed to disabled](#defaults-changed-to-disabled)); it was **not** part of this
   acceptance, and the executable that was accepted is the one built from `2d8eb97a`.
 - **Client:** an iPad running VoidLink, over Tailscale (a direct path, about 9 ms round trip, not relayed).
 - **Configuration:** the restrictive host guard described above was active. The accepted executable defaulted both
