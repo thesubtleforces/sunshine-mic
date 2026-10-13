@@ -25,7 +25,9 @@ _basever=2026.914.233613  # upstream Sunshine tag this branch is based on (v${_b
 
 pkgname='sunshine-mic'
 pkgver=${_basever}
-pkgrel=2
+# pkgrel history: 1 first build; 2 validated trial build (commit 2d8eb97a, installed on the trial host);
+# 3 both microphone options default to disabled.
+pkgrel=3
 pkgdesc="Self-hosted game stream host for Moonlight, with client-to-host microphone streaming"
 arch=('x86_64' 'aarch64')
 url=${_project_url}

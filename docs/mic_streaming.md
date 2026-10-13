@@ -6,7 +6,8 @@ microphone.
 
 > **Read [Security model and limits](#security-model-and-limits) before enabling this.** The microphone stream is
 > not authenticated and not encrypted, and what it carries is played into the host as if it were a local
-> microphone. Use it with **one** known client over Tailscale/WireGuard.
+> microphone. Use it with **one** known client over Tailscale/WireGuard. Both options of this feature are
+> **disabled by default**; turning the microphone on is an explicit opt-in (see [Options](#options)).
 
 ## Compatible clients
 
@@ -26,10 +27,11 @@ option on **before** connecting; the client negotiates the stream when the sessi
 ## What the host does
 
 1. The client's RTSP `SETUP streamid=mic` is answered with `200` and `server_port=<base port + 12>` (UDP 48001 with
-   the default base port). The reply is `200` even when `stream_mic` is disabled, because some clients abort the
-   whole connection otherwise. Every RTSP `DESCRIBE` clears the "microphone was set up" flag of the launch state, so
-   an abandoned handshake cannot leak into the next one.
-2. When the stream session starts, the host binds that UDP port first. Only if the bind succeeded does it create
+   the default base port). The reply is `200` even when `stream_mic` is disabled (the default), because some
+   clients abort the whole connection otherwise. Every RTSP `DESCRIBE` clears the "microphone was set up" flag of
+   the launch state, so an abandoned handshake cannot leak into the next one.
+2. When the stream session starts **and `stream_mic` is enabled**, the host binds that UDP port first. With
+   `stream_mic` disabled it binds nothing and creates nothing. Only if the bind succeeded does it create
    the PipeWire source `moonlight-mic` (S16, 48 kHz, mono) and, if `mic_default_source` is enabled, try to make it
    the default audio source (see [Default source](#default-source)).
 3. Datagrams are decoded with Opus and played into the source (see [Ownership](#ownership) and
@@ -39,6 +41,9 @@ option on **before** connecting; the client negotiates the stream when the sessi
 
 ## Security model and limits
 
+- **Opt-in only.** `stream_mic` and `mic_default_source` are both `disabled` by default. With the options absent
+  from `sunshine.conf` the host opens no UDP port and creates no PipeWire source, even when a paired client sends
+  the microphone setup (the end-to-end scenario `defaults-absent` checks the port and the source, not the value).
 - **No authentication, no encryption.** Microphone datagrams are plain Opus over UDP. The host does not advertise
   `SS_ENC_MIC`, and the encryption negotiated for the main stream (video, audio, control) **does not cover the
   microphone stream**: it is a separate UDP flow with no key exchange. Anyone who can observe the path can listen
@@ -58,7 +63,8 @@ option on **before** connecting; the client negotiates the stream when the sessi
 - **Do not widen the firewall.** Allow the microphone port for exactly the one client you use (see
   [Deployment](#deployment-one-client-over-tailscale)); never for whole private ranges.
 - **Main-stream approval is not microphone approval.** A client that is paired and allowed to stream can send
-  microphone audio. If you need to stop that, set `stream_mic = disabled` (the stream session itself still works).
+  microphone audio once `stream_mic` is enabled. If you need to stop that, set `stream_mic = disabled` (the
+  default; the stream session itself still works).
 
 ### Ownership
 
@@ -103,26 +109,39 @@ writes) so applications that record from "the default input" use the remote micr
 - every write and flush is checked and success is only logged when confirmed. If PipeWire does not answer, the
   default is left as it is (a warning shows how to clear it).
 
-For a first trial set `mic_default_source = disabled`: the virtual device still exists and can be selected
-explicitly, but nothing else in the desktop changes.
+`mic_default_source` is `disabled` by default: with only `stream_mic = enabled` the virtual device exists and can be
+selected explicitly, but nothing else in the desktop changes. Enable it only when applications that record from
+"the default input" should pick up the remote microphone.
 
 ## Options
 
 | Option | Default | Description |
 |---|---|---|
-| `stream_mic` | `enabled` | Accept the client's microphone stream. |
-| `mic_default_source` | `enabled` | Make "Moonlight Mic" the default audio source while a client microphone is connected. |
+| `stream_mic` | `disabled` | Accept the client's microphone stream. |
+| `mic_default_source` | `disabled` | Make "Moonlight Mic" the default audio source while a client microphone is connected. |
 
-Both are Linux-only and are available in the web UI under **Audio/Video**.
+Both are Linux-only and are available in the web UI under **Audio/Video**. Enable `stream_mic` only after the network
+restriction has been verified (see [Deployment](#deployment-one-client-over-tailscale)); for a first trial leave
+`mic_default_source` disabled.
 
-**Both default to `enabled` in the code**, so a fresh install of this fork accepts a microphone session from any paired
-client and, with `mic_default_source`, switches the default input for its duration. For a first trial set both to
-`disabled` in `sunshine.conf` and enable `stream_mic` only after the network restriction has been verified (see
-[Deployment](#deployment-one-client-over-tailscale)).
+### Defaults changed to disabled
+
+The first validated builds of this fork (package revisions `-1` and `-2`, built from `2d8eb97a` and earlier) defaulted
+**both options to `enabled`**. An unauthenticated stream should never be reachable without a deliberate choice, so
+both now default to `disabled`:
+
+- a configuration that sets the options explicitly behaves exactly as before, in every build;
+- a configuration that leaves them out now opens no microphone port and creates no source. Add `stream_mic = enabled`
+  to turn the microphone on;
+- `stream_mic = enabled` alone no longer changes the default input. Add `mic_default_source = enabled` for that, or
+  select "Moonlight Mic" explicitly.
+
+If you run an older build, set both options to `disabled` in `sunshine.conf` yourself until you have upgraded.
 
 ## Deployment: one client over Tailscale
 
-1. Pair and verify the client with stock behaviour first. Keep `stream_mic = disabled` until you want to test.
+1. Pair and verify the client with stock behaviour first. Leave `stream_mic` disabled (the default) until the
+   restriction below is in place.
 2. Find the client's Tailscale address (`tailscale status`) — it is a `100.x.y.z` address; use it as
    `<client-tailscale-ip>` below. Do not use LAN ranges.
 3. Allow UDP `base port + 12` (48001 by default) **only from that address, on `tailscale0`**:
@@ -145,7 +164,9 @@ client and, with `mic_default_source`, switches the default input for its durati
    client reach this host's port, or with an nftables rule at an earlier hook priority. Until you have checked, do
    not describe the setup as "single-client enforced". The fork itself ignores datagrams from any address other
    than the owning session's, so the firewall layer is defence in depth.
-5. Dictate into a scratch text editor, not a terminal.
+5. Only now opt in: set `stream_mic = enabled` in `sunshine.conf` (or the web UI, **Audio/Video**) and restart
+   Sunshine. Leave `mic_default_source` disabled for a first trial and select "Moonlight Mic" in the application.
+6. Dictate into a scratch text editor, not a terminal.
 
 To remove the rule: `sudo ufw delete allow in on tailscale0 from <client-tailscale-ip> to any port 48001 proto udp`.
 
@@ -169,8 +190,8 @@ A 13-byte variant with a 16-bit type of `0x5504` is also accepted. Any valid Opu
 - `SUNSHINE_BUILD_PIPEWIRE_MIC` requires PipeWire to be found at configure time (it rides on the KWin/portal
   capture options, which are on by default).
 - The default source is switched when a microphone session **starts**, not when the first audio packet arrives.
-  Clients that set the stream up without sending audio still change the default; use `mic_default_source =
-  disabled` if that matters.
+  With `mic_default_source` enabled, clients that set the stream up without sending audio still change the
+  default; it is disabled by default.
 
 ## Verification
 
@@ -184,7 +205,7 @@ A 13-byte variant with a 16-bit type of `0x5504` is also accepted. Any valid Opu
 - Not covered by automation: Windows/macOS builds, NAT, encrypted main streams. A real VoidLink/iPad session was run
   by hand; see [Live acceptance](#live-acceptance-one-session).
 
-### Evidence (2026-10-12)
+### Evidence for the first validated package (2026-10-12, revision `-2`, commit `2d8eb97a`)
 
 | Check | Result |
 |---|---|
@@ -204,12 +225,16 @@ launch; two clients on one address were both accepted.
 One real session, run by hand after the packaged build below was installed, on one host and one client:
 
 - **Host:** Arch/Omarchy, Hyprland (Wayland), Intel iGPU with VAAPI, running the `sunshine-mic` package built from
-  commit `2d8eb97a`. Commits made on this branch after that one change documentation only; the installed executable
-  is the one built from `2d8eb97a`, which is also the commit its `--version` output prints.
+  commit `2d8eb97a`; that is also the commit its `--version` output prints. Commits made on this branch after it, up
+  to `df0718ab`, changed documentation only. A later commit changes the code defaults of both options to
+  `disabled` (see [Defaults changed to disabled](#defaults-changed-to-disabled)); it was **not** part of this
+  acceptance, and the executable that was accepted is the one built from `2d8eb97a`.
 - **Client:** an iPad running VoidLink, over Tailscale (a direct path, about 9 ms round trip, not relayed).
-- **Configuration:** the restrictive host guard described above was active. Automatic default-source switching
-  (`mic_default_source`) was **off** for the session, the saved Sunshine configuration still has both microphone
-  options disabled, and the microphone stream was enabled for the running service by a runtime override. "Moonlight
+- **Configuration:** the restrictive host guard described above was active. The accepted executable defaulted both
+  options to `enabled`, so the session set them explicitly: automatic default-source switching
+  (`mic_default_source`) was **off**, the saved Sunshine configuration still has both microphone options disabled,
+  and the microphone stream was enabled for the running service by a runtime override (`stream_mic=enabled`,
+  `mic_default_source=disabled`). "Moonlight
   Mic" was made the dictation input through a manual source preference, not by this fork's default-source switching.
 - **Result:** dictation from the iPad microphone through a local streaming speech recognizer (Parakeet) worked; the
   words appeared while speaking, before the recording was stopped. At the end of the session video and dictation were

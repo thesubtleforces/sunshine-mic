@@ -82,14 +82,14 @@ const config = ref(props.config)
                   id="stream_mic"
                   locale-prefix="config"
                   v-model="config.stream_mic"
-                  default="true"
+                  default="false"
         ></Checkbox>
 
         <Checkbox class="mb-3"
                   id="mic_default_source"
                   locale-prefix="config"
                   v-model="config.mic_default_source"
-                  default="true"
+                  default="false"
         ></Checkbox>
       </template>
     </PlatformLayout>

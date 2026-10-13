@@ -930,7 +930,8 @@ supported on the current platform.
         <td colspan="2">
             Whether to accept the microphone stream a client sends to the host. When a client streams its microphone,
             Sunshine decodes the audio and exposes it as the PipeWire audio source "Moonlight Mic". The stream uses
-            UDP port base + 12 (48001 with the default port).
+            UDP port base + 12 (48001 with the default port). Disabled by default: with the option absent or
+            disabled Sunshine binds no port and creates no source.
             @note{This option is only supported on Linux.}
             @warning{The microphone stream is neither authenticated nor encrypted, and datagrams are routed by the
             client's source address only. Use it with one known client over Tailscale/WireGuard. See
@@ -940,13 +941,13 @@ supported on the current platform.
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            enabled
+            disabled
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            stream_mic = disabled
+            stream_mic = enabled
             @endcode</td>
     </tr>
 </table>
@@ -960,20 +961,21 @@ supported on the current platform.
             While a client microphone is connected, make "Moonlight Mic" the system default audio source so that
             applications using the default input (dictation tools, voice chat) record from it. The previous default is
             restored when the last microphone session ends, unless it was changed or cleared in the meantime.
-            Disable it for a first trial: the virtual device is still created but nothing else changes.
+            Disabled by default: with `stream_mic` enabled the virtual device is still created and can be selected
+            explicitly, but nothing else changes.
             @note{This option is only supported on Linux.}
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            enabled
+            disabled
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            mic_default_source = disabled
+            mic_default_source = enabled
             @endcode</td>
     </tr>
 </table>

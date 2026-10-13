@@ -6,7 +6,8 @@ pairing, `~/.config/sunshine`, firewall rules) keeps working unchanged. It is de
 (`omacom/omarchy-pkgs`, `pkgbuilds/sunshine`).
 
 > Read `docs/mic_streaming.md` first. The microphone stream is not authenticated or encrypted; install it only for
-> one known client over Tailscale/WireGuard, and verify the network restriction **before** enabling `stream_mic`.
+> one known client over Tailscale/WireGuard, and verify the network restriction **before** enabling `stream_mic`
+> (it is disabled by default).
 
 ## Build
 
@@ -79,8 +80,11 @@ getcap /usr/bin/sunshine                          # cap_sys_admin,cap_sys_nice=p
 systemctl --user daemon-reload && systemctl --user start sunshine
 ```
 
-For a first trial keep `stream_mic = disabled` in `sunshine.conf` until the network restriction for the microphone
-port is in place and verified (see `docs/mic_streaming.md`).
+Both microphone options default to `disabled`, so this package opens nothing until you set `stream_mic = enabled` in
+`sunshine.conf`; do that only after the network restriction for the microphone port is in place and verified (see
+`docs/mic_streaming.md`). Package revisions `-1` and `-2` (built from `2d8eb97a` and earlier) defaulted both options
+to `enabled`: with one of those installed, write `stream_mic = disabled` and `mic_default_source = disabled` into
+`sunshine.conf` explicitly.
 
 ## Updates
 

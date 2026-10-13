@@ -61,11 +61,18 @@ The full suite takes about 3.5 minutes (each `/cancel` waits for the initial-pin
 
 `existing` = behaviour already implemented; `new` = behaviour being implemented, may fail on an older binary.
 
+Both microphone options are disabled by default in the host, so the generated `sunshine.conf` opts in explicitly
+(`stream_mic = enabled`, `mic_default_source = enabled`) and a scenario can override or **omit** a key (`None`). The
+omitting scenarios (`defaults-absent`, `mic-only-optin`) assert observable effects of the defaults (port, node, default
+key), not their values, and are expected to fail on a binary whose defaults are `enabled`.
+
 | scenario | covers | asserts |
 |---|---|---|
 | `baseline` | existing | SETUP mic 200 + `server_port=base+12`; node `moonlight-mic` (Audio/Source) appears; default key = `{"name":"moonlight-mic"}`; UDP port held; 440 Hz tone recorded with RMS > 2000; `/cancel` -> node gone, key absent, port free |
 | `previous-default` | existing | a pre-set default source is restored byte-for-byte after teardown |
 | `mic-disabled` | existing | `stream_mic = disabled`: SETUP mic still 200, no node, no socket, key untouched, session fine |
+| `defaults-absent` | new | both options **absent** from the config: the same assertions as `mic-disabled` (SETUP mic 200, no node, no socket, key untouched, no write of the default, session fine) |
+| `mic-only-optin` | new | `stream_mic = enabled`, `mic_default_source` absent: node + audio, the pre-set default source is never touched |
 | `default-disabled` | existing | `mic_default_source = disabled`: node + audio, key never written (metadata monitor) |
 | `toggle-restart` | existing | stop, then resume from a new source port with the counter restarted at 0: audio flows again |
 | `toggle-restart-lost-first` | new | counter restarts at 1 (packet 0 lost) after ~335 packets: audio resumes within 5 packets; control phase proves the datagrams arrive |

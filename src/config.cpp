@@ -806,8 +806,8 @@ namespace config {
     {},  // virtual_sink
     true,  // stream audio
     true,  // install_steam_drivers
-    true,  // stream_mic
-    true,  // mic_default_source
+    false,  // stream_mic: unauthenticated, unencrypted UDP; opt-in only
+    false,  // mic_default_source: changes the desktop's default input; opt-in only
   };
 
   /**

@@ -1370,7 +1370,7 @@ def udp_port_free(port: int) -> bool:
 class SunshineInstance:
     """One configured sunshine process (config, apps, paired-client state) inside the scenario dir."""
 
-    def __init__(self, ctx: "ScenarioCtx", base: int, options: Dict[str, str], idents: List[Identity]):
+    def __init__(self, ctx: "ScenarioCtx", base: int, options: Dict[str, Optional[str]], idents: List[Identity]):
         self.ctx = ctx
         self.base = base
         self.options = options
@@ -1432,10 +1432,13 @@ class SunshineInstance:
             "dd_configuration_option": "disabled",
             "locale": "en",
             "origin_web_ui_allowed": "pc",
+            # Both microphone options are disabled by default in the host, so every scenario opts in explicitly
+            # here. A scenario passes None for a key to leave it out of the file and exercise the default.
             "stream_mic": "enabled",
             "mic_default_source": "enabled",
         }
         conf.update(self.options)
+        conf = {k: v for k, v in conf.items() if v is not None}
         with open(self.conf_path, "w") as fh:
             for k, v in conf.items():
                 fh.write(f"{k} = {v}\n")
@@ -1803,7 +1806,7 @@ class ScenarioCtx:
         self.pw.nodewatch.start()
         return self.pw
 
-    def start_sunshine(self, options: Optional[Dict[str, str]] = None, idents: Iterable[str] = ("A",),
+    def start_sunshine(self, options: Optional[Dict[str, Optional[str]]] = None, idents: Iterable[str] = ("A",),
                        base: Optional[int] = None) -> SunshineInstance:
         opts = {"ping_timeout": self.sdef.ping_timeout_ms}
         opts.update(options or {})
@@ -2003,12 +2006,25 @@ def sc_previous_default(ctx: ScenarioCtx):
     ctx.note(f"metadata history of {DEFAULT_KEY}: {hist}")
 
 
-@scenario("mic-disabled", "existing",
-          "stream_mic=disabled: SETUP mic still 200, but no node, no UDP socket, key untouched, session fine")
-def sc_mic_disabled(ctx: ScenarioCtx):
+def conf_has_key(sun: SunshineInstance, key: str) -> bool:
+    """True when the generated sunshine.conf of this instance sets the key (the harness never writes comments)."""
+    with open(sun.conf_path) as fh:
+        return any(line.split("=", 1)[0].strip() == key for line in fh if "=" in line)
+
+
+def closed_mic_session(ctx: ScenarioCtx, options: Dict[str, Optional[str]]) -> None:
+    """Run an ordinary stream whose client sets the microphone up against a host that must not open it.
+
+    The explicit `stream_mic = disabled` scenario and the "options absent" scenario share this body so that both
+    assert the same boundary: SETUP mic is still answered, but there is no UDP socket, no PipeWire source and no
+    write of the default source, and the stream itself is unaffected.
+    """
     pw = ctx.start_pipewire()
     pw.set_default_source(PREVIOUS_VALUE)
-    sun = ctx.start_sunshine({"stream_mic": "disabled"})
+    sun = ctx.start_sunshine(options)
+    for key, value in options.items():
+        if value is None:
+            ctx.check(f"config file really lacks {key}", not conf_has_key(sun, key))
     c = ctx.client(sun)
     st = c.start(mic=True)
     ctx.require(start_checks(ctx, sun, st), "session did not start")
@@ -2022,6 +2038,40 @@ def sc_mic_disabled(ctx: ScenarioCtx):
               info.get("state") == "SUNSHINE_SERVER_BUSY", f"state={info.get('state')}")
     ctx.check("sunshine alive", sun.alive())
     c.cancel()
+    final_state_checks(ctx, sun, (PREVIOUS_VALUE, DEFAULT_TYPE))
+    ctx.check("metadata monitor saw no write of the mic node",
+              (pw.monitor.writes_of(OWN_VALUE) == 0) if pw.monitor else True)
+
+
+@scenario("mic-disabled", "existing",
+          "stream_mic=disabled: SETUP mic still 200, but no node, no UDP socket, key untouched, session fine")
+def sc_mic_disabled(ctx: ScenarioCtx):
+    closed_mic_session(ctx, {"stream_mic": "disabled"})
+
+
+@scenario("defaults-absent", "new",
+          "both mic options absent from the config (the defaults): SETUP mic still 200, but no node, no UDP socket, "
+          "key untouched, session fine")
+def sc_defaults_absent(ctx: ScenarioCtx):
+    closed_mic_session(ctx, {"stream_mic": None, "mic_default_source": None})
+
+
+@scenario("mic-only-optin", "new",
+          "stream_mic=enabled and mic_default_source absent: node + audio, but the default key is never written")
+def sc_mic_only_optin(ctx: ScenarioCtx):
+    pw = ctx.start_pipewire()
+    pw.set_default_source(PREVIOUS_VALUE)
+    sun = ctx.start_sunshine({"mic_default_source": None})
+    ctx.check("config file opts in with stream_mic", conf_has_key(sun, "stream_mic"))
+    ctx.check("config file really lacks mic_default_source", not conf_has_key(sun, "mic_default_source"))
+    c = ctx.client(sun)
+    ctx.require(start_checks(ctx, sun, c.start(mic=True)), "session did not start")
+    ctx.check("node appears", ctx.wait_node(True))
+    rep = tone_burst(ctx, c, 40)
+    ctx.check("node carries the tone", rep.active_ms(FREQ_A) >= 400, rep.describe())
+    ctx.check("previous default untouched during the session",
+              ctx.default_source() == (PREVIOUS_VALUE, DEFAULT_TYPE), f"got {ctx.default_source()}")
+    cancel_and_check_gone(ctx, c, sun)
     final_state_checks(ctx, sun, (PREVIOUS_VALUE, DEFAULT_TYPE))
     ctx.check("metadata monitor saw no write of the mic node",
               (pw.monitor.writes_of(OWN_VALUE) == 0) if pw.monitor else True)
