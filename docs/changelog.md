@@ -21,8 +21,9 @@ until the exact candidate passes disposable graphical-host and real iPad qualifi
   provenance/checksums and a separately approved, immutable preview publication workflow.
 - Verify CI checkout identity as its unprivileged builder owner after the ownership handoff, avoiding
   container-root access to a runner-owned bind mount without weakening Git's ownership checks.
-- Provision the narrow Arch UID/GID mapper capabilities explicitly in disposable CI; namespace
-  verification remains mandatory and never falls back to an unisolated host run.
+- Provision narrow Arch UID/GID mapper capabilities and permit nested namespaces on the disposable
+  hosted CI runner. Real namespace/mount/packet verification remains mandatory; never apply these
+  CI-only privilege settings to a production machine or fall back to an unisolated run.
 - Introduce fork-specific product/support surfaces and protected installation, security and rollback guidance.
 
 These entries describe source changes, **not successful release qualification**. Diagnostic artifacts,

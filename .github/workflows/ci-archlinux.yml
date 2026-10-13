@@ -53,6 +53,13 @@ jobs:
           setcap cap_setuid=ep /usr/bin/newuidmap
           setcap cap_setgid=ep /usr/bin/newgidmap
           getcap /usr/bin/newuidmap /usr/bin/newgidmap
+          # Ubuntu's host AppArmor userns restriction also affects unconfined
+          # containers. Change only this disposable hosted runner, never users'
+          # machines; the actual namespace/mount/packet tests remain mandatory.
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sysctl kernel.apparmor_restrict_unprivileged_userns
+            sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
           # makepkg --syncdeps alone uses this delegation; never install Sunshine.
           printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman\n' > /etc/sudoers.d/ci-builder
           chmod 0440 /etc/sudoers.d/ci-builder
