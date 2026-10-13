@@ -217,7 +217,7 @@ One real session, run by hand after the packaged build below was installed, on o
 - **Disconnect and reconnect:** a read-only watcher saw UDP 48001 and the "Moonlight Mic" source disappear on
   disconnect, the effective default input fall back to the physical microphone, and both come back, with Moonlight Mic
   as the default input, on reconnect. That default was the manual preference above: **automatic switching was not
-  exercised live**; it is covered by the private-daemon tests only.
+  exercised live**; it is covered only by the private-PipeWire unit tests and the isolated end-to-end harness.
 - **Video (informational; this fork does not touch the video path):** 2752x2064 at 120 fps, HEVC encoded with Intel
   VAAPI; no host encoder settings were changed. After client-side changes the *negotiated* video bitrate rose from
   about 7.3 Mbps to about 71.0 Mbps, which is higher than the 40 Mbps that had been suggested; the setting the client
