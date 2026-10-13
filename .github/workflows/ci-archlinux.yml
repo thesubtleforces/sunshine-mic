@@ -148,7 +148,9 @@ jobs:
           namcap "$package" 2>&1 | tee ci-work/logs/namcap-package.log
           python -c 'import pathlib; assert not any(" E: " in s for s in pathlib.Path("ci-work/logs/namcap-package.log").read_text().splitlines()), "namcap package errors"'
           bsdtar --no-same-owner -xf "$package" -C ci-work/extracted
-          ci-work/extracted/usr/bin/sunshine --version | tee ci-work/logs/package-version.log
+          ci-work/extracted/usr/bin/sunshine \
+            "file_apps=$PWD/ci-work/extracted/usr/share/sunshine/apps.json" --version \
+            | tee ci-work/logs/package-version.log
           python - <<'PY'
           import hashlib, json, os, pathlib, re, subprocess
           work = pathlib.Path('ci-work')

@@ -23,6 +23,8 @@ pkgbase = sunshine-mic
 	depends = avahi
 	depends = curl
 	depends = gcc-libs
+	depends = glib2
+	depends = glibc
 	depends = gtk3
 	depends = hicolor-icon-theme
 	depends = libayatana-appindicator
@@ -39,6 +41,7 @@ pkgbase = sunshine-mic
 	depends = libxfixes
 	depends = libxrandr
 	depends = libxtst
+	depends = mesa
 	depends = miniupnpc
 	depends = nftables
 	depends = numactl
@@ -51,12 +54,14 @@ pkgbase = sunshine-mic
 	depends = udev
 	depends = util-linux
 	depends = vulkan-icd-loader
+	depends = wayland
 	depends = which
 	optdepends = libva-mesa-driver: AMD GPU encoding support
 	optdepends = tailscale: authenticated tailscale0 and an exact iPad peer are required for protected setup
 	provides = sunshine=2026.914.233613
 	conflicts = sunshine
 	options = !strip
+	options = !debug
 	source = sunshine-mic::git+https://github.com/thesubtleforces/sunshine-mic.git#tag=mic-v2026.1013.180134
 	source = ffmpeg-2026.910.121303-x86_64.tar.gz::https://github.com/LizardByte/build-deps/releases/download/v2026.910.121303/Linux-x86_64-ffmpeg.tar.gz
 	source = flatpak-builder-tools::git+https://github.com/flatpak/flatpak-builder-tools.git#commit=de2225a6dee4818c1339b3cdbf29f90c471fcb7e

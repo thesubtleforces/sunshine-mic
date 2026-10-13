@@ -73,15 +73,21 @@ separate exact-candidate report as described in [RELEASING.md](RELEASING.md).
   disallows admin bypass and allows only `mic-v*` tags. The observed **Arch / Arch candidate** check,
   bound to GitHub Actions app `15368`, is required by the active branch ruleset with no bypass actors.
   No release approval or publication was exercised.
-- [Hosted run 38453390659](https://github.com/thesubtleforces/sunshine-mic/actions/runs/38453390659)
-  passed real namespace/firewall/transaction checks and 25 artifact contracts, retrieved/prepared public
-  sources and configured the real CUDA-enabled package build. It then failed legacy AppStream validation
-  because the template had no release entry; no package/candidate was uploaded. The development-build
-  metadata correction passed both actual validators locally; a complete new CI result is still required.
-- Initial recipe `namcap` warnings were reviewed: the explicit `x86_64` asset is intentional because
-  this preview declares only x86_64; the VCS/git warning is a static-analysis false positive (`git` is
-  declared in actual makepkg `.SRCINFO`). A missing maintainer tag was corrected. Package-level namcap
-  findings remain a separate build gate.
+- [Hosted run 38455263568](https://github.com/thesubtleforces/sunshine-mic/actions/runs/38455263568)
+  passed real namespace/firewall/transaction checks and 25 artifact contracts, built the CUDA-enabled
+  Arch package, passed both AppStream validators and produced GoogleTest XML (668 tests, zero failures
+  or errors, one disabled) and coverage (18,176 valid lines, 5,662 covered). Package namcap reported no
+  errors. Extracted-binary identity verification then failed because `--version` tried to read installed
+  rather than staged application assets; no candidate was uploaded. An isolated historical-binary smoke
+  reproduced that failure and verified the staged-asset correction. It does not qualify the new binary.
+- The package audit found a bundled Codecov analysis report with absolute build paths. Inherited bundle
+  analysis and its dependency were removed; an actual local Vite build produced web assets without the
+  report. Missing explicit direct libraries were declared and unused debug packaging was disabled.
+- Namcap warnings were reviewed: explicit `x86_64` is intentional for this pinned asset; `git` is declared
+  in actual makepkg `.SRCINFO`; private `guardlib` lives in the intentionally isolated package directory;
+  helper subprocesses and runtime-loaded graphics/desktop libraries are not all visible to static ELF
+  dependency analysis. The `gcc-libs` dependency supplies the observed libstdc++ runtime. Full candidate
+  assembly, actual packaged receiver checks and final namcap review remain required.
 
 Static reviews found and prompted corrections for incomplete activation recovery, user/root transaction races,
 direct-process diagnostic blind spots, socket verification exits, reset parser differentials, reset recovery

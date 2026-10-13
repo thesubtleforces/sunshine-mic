@@ -26,6 +26,10 @@ until the exact candidate passes disposable graphical-host and real iPad qualifi
   CI-only privilege settings to a production machine or fall back to an unisolated run.
 - Identify AppStream metadata as a development build with its actual version/build date, retaining both
   metadata validators without implying a qualified release or package-manager publication.
+- Supply staged application assets to uninstalled binary version checks and isolate the recipe's
+  configuration home. Declare the observed direct runtime libraries and disable unused debug packaging.
+- Remove inherited Codecov bundle analysis and its dependency; diagnostic reports containing absolute
+  build paths do not belong in the installed web assets.
 - Introduce fork-specific product/support surfaces and protected installation, security and rollback guidance.
 
 These entries describe source changes, **not successful release qualification**. Diagnostic artifacts,
