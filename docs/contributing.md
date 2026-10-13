@@ -1,6 +1,40 @@
 # Contributing
-Read our contribution guide in our organization level
-[docs](https://docs.lizardbyte.dev/latest/developers/contributing.html).
+Sunshine Mic is an independent community preview fork focused on iPad microphone forwarding,
+protected setup, packaging, and documentation. Qualification and publication are pending; do not
+treat a successful build as a qualified release or an available AUR/Omarchy package.
+
+Please use [this fork's issues](https://github.com/thesubtleforces/sunshine-mic/issues) for friendly
+troubleshooting, bug reports, and feature proposals, and target pull requests at `mic`.
+Small, focused changes with reproduction steps and evidence are welcome. Explain what you tested
+and what remains untested; no response or review SLA is guaranteed.
+See [Support](../.github/SUPPORT.md) and report suspected vulnerabilities through
+[private reporting](https://github.com/thesubtleforces/sunshine-mic/security/advisories/new),
+never a public issue. Do not include secrets, private addresses, recordings, or pairing material.
+
+Do not create issues or pull requests in the LizardByte organization for this fork.
+An explicitly approved package submission to `omacom/omarchy-pkgs` is a separate permitted track,
+not a promise of acceptance. Preserve GPL licensing, LICENSE, NOTICE, and upstream author attribution.
+The [upstream contribution guide](https://docs.lizardbyte.dev/latest/developers/contributing.html)
+is a technical reference, not this fork's support route or automation contract.
+
+## Change and release boundaries
+
+Follow [AGENTS.md](../AGENTS.md), existing code patterns, `.clang-format`, and Doxygen conventions.
+Add or update tests for changed behavior. Keep CMake build directories under `cmake-build-*`.
+Do not add dictation engines, speech models, or video tuning to the microphone preview.
+Use the [canonical installation guide](../packaging/omarchy/README.md) rather than duplicating
+setup instructions.
+
+The fork workflow graph consists of `ci.yml` (pushes/PRs for `mic`), `ci-archlinux.yml`
+(reusable Arch candidate build), and `ci-release.yml` (gated maintainer-only publication dispatch).
+PRs do not publish releases. The removed upstream publishing, localization, and Codecov integrations
+are not part of this fork's CI contract.
+
+Management, firewall, package, and reboot checks require disposable isolation; never run the root
+helper against the production filesystem or install/restart a production service to test a candidate.
+Real graphical-host and iPad/VoidLink qualification must exercise the exact candidate package bytes.
+Report missing qualification honestly; tags, releases, AUR publication, and the Omarchy package PR
+remain held until that qualification is complete. Never replace already published artifact bytes.
 
 ## Recommended Tools
 
@@ -23,8 +57,8 @@ Read our contribution guide in our organization level
 
 @tabs{
   @tab{CMake | ```bash
-    cmake -B build -G Ninja -S . --target web-ui
-    ninja -C build web-ui
+    cmake -B cmake-build-web -G Ninja -S .
+    cmake --build cmake-build-web --target web-ui
     ```}
   @tab{Manual | ```bash
     npm run dev
@@ -32,32 +66,13 @@ Read our contribution guide in our organization level
 }
 
 ### Localization
-Sunshine and related LizardByte projects are being localized into various languages.
-The default language is `en` (English).
+The inherited project supports localization; the default language is `en` (English).
+For fork changes, update only English source strings, not `en-US` or other language variants.
+This fork does not run the inherited Crowdin synchronization workflow, so merging a change does
+not automatically translate it or open localization pull requests.
 
-![](https://app.lizardbyte.dev/dashboard/crowdin/LizardByte_graph.svg)
-
-@admonition{Community | We are looking for language coordinators to help approve translations.
-The goal is to have the bars above filled with green!
-If you are interested, please reach out to us on our Discord server.}
-
-#### CrowdIn
-The translations occur on [CrowdIn][crowdin-url].
-Anyone is free to contribute to the localization there.
-
-##### Translation Basics
-* The brand names *LizardByte* and *Sunshine* should never be translated.
-* Other brand names should never be translated. Examples include *AMD*, *Intel*, and *NVIDIA*.
-
-##### CrowdIn Integration
-How does it work?
-
-When a change is made to Sunshine source code, a workflow generates new translation templates
-that get pushed to CrowdIn automatically.
-
-When translations are updated on CrowdIn, a push gets made to the *l10n_master* branch and a PR is made against the
-*master* branch. Once the PR is merged, all updated translations are part of the project and will be included in the
-next release.
+Brand names such as *Sunshine Mic*, *Sunshine*, *LizardByte*, *AMD*, *Intel*, and *NVIDIA*
+should not be translated.
 
 #### Extraction
 
@@ -79,10 +94,8 @@ The following is a simple example of how to use it.
   > to sort the keys.
 
   > [!IMPORTANT]
-  > Due to the integration with Crowdin, it is important to only add strings to the *en.json* file,
-  > and to not modify any other language files. After the PR is merged, the translations can take place
-  > on [CrowdIn][crowdin-url]. Once the translations are complete, a PR will be made
-  > to merge the translations into Sunshine.
+  > Only add source strings to *en.json*. Do not modify other language files in a feature PR.
+  > Translation updates require a separately reviewed change; no automatic Crowdin PR is promised.
 
 * Use the string in the Vue component.
   ```html
@@ -118,14 +131,9 @@ some situations. For example the system tray icon could be localized as it is us
 > The below is for information only. Contributors should never include manually updated template files, or
 > manually compiled language files in Pull Requests.
 
-Strings are automatically extracted from the code to the `locale/sunshine.po` template file. The generated file is
-used by CrowdIn to generate language specific template files. The file is generated using the
-`.github/workflows/localize.yml` workflow and is run on any push event into the `master` branch. Jobs are only run if
-any of the following paths are modified.
-
-```yaml
-- 'src/**'
-```
+Local extraction can generate the `locale/sunshine.po` template for inspection.
+There is no `localize.yml` workflow in this fork; extracted templates and compiled language files
+are not automatically updated on pushes.
 
 When testing locally, it may be desirable to manually extract, initialize, update, and compile strings. Python and
 uv are required for this, along with the Python dependencies in the Sunshine `pyproject.toml`. From the repository
@@ -148,15 +156,13 @@ Additionally, [xgettext](https://www.gnu.org/software/gettext) must be installed
   ```
 
 > [!IMPORTANT]
-> Due to the integration with CrowdIn, it is important to not include any extracted or compiled files in
-> Pull Requests. The files are automatically generated and updated by the workflow. Once the PR is merged, the
-> translations can take place on [CrowdIn][crowdin-url]. Once the translations are
-> complete, a PR will be made to merge the translations into Sunshine.
+> Keep extracted templates and compiled language files out of feature pull requests.
+> Local generation is for inspection and testing, not evidence of a translation service integration.
 
 ### Testing
 
 #### Clang Format
-Source code is tested against the `.clang-format` file for linting errors.
+Follow the repository's `.clang-format` settings when changing C/C++ source.
 
 From the repository root, apply clang-format locally with the installed lizardbyte-common script. This will modify
 files in place.
@@ -176,31 +182,31 @@ can be disabled by setting the `BUILD_TESTS` CMake option to `OFF`.
 To run the tests, execute the following command.
 
 ```bash
-./build/tests/test_sunshine
+./cmake-build-debug/tests/test_sunshine
 ```
 
 To see all available options, run the tests with the `--help` flag.
 
 ```bash
-./build/tests/test_sunshine --help
+./cmake-build-debug/tests/test_sunshine --help
 ```
 
 > [!TIP]
 > See the googletest [FAQ](https://google.github.io/googletest/faq.html) for more information on how to use Google Test.
 
-We use [gcovr](https://www.gcovr.com) to generate code coverage reports,
-and [Codecov](https://about.codecov.io) to analyze the reports for all PRs and commits.
-
-Codecov will fail a PR if the total coverage is reduced too much, or if not enough of the diff is covered by tests.
-In some cases, the code cannot be covered when running the tests inside of GitHub runners. For example, any test that
-needs access to the GPU will not be able to run. In these cases, the coverage can be omitted by adding comments to the
-code. See the [gcovr documentation](https://gcovr.com/en/stable/guide/exclusion-markers.html#exclusion-markers) for
-more information.
+The build supports [gcovr](https://www.gcovr.com) coverage reports; this fork does not use the
+removed Codecov integration as a PR gate. Add tests for changed behavior and report coverage gaps,
+especially GPU-dependent cases that cannot run on ordinary CI runners. Do not suppress coverage
+merely to make a report look healthy. See the
+[gcovr documentation](https://gcovr.com/en/stable/guide/exclusion-markers.html) for justified exclusions.
 
 Even if your changes cannot be covered in the CI, we still encourage you to write the tests for them. This will allow
 maintainers to run the tests locally.
 
-[crowdin-url]: https://translate.lizardbyte.dev
+The real-binary receiver and management suites live in `tests/e2e/mic_e2e.py` and
+`tests/e2e/mic_guard_e2e.py`. Run them only with their required disposable isolation and candidate
+binary inputs. A namespace test is not proof of package lifecycle, graphical login, reboot
+persistence, or a working real iPad session.
 
 <div class="section_buttons">
 

@@ -1,0 +1,873 @@
+#!/usr/bin/python3
+"""Unprivileged, fail-closed Sunshine Mic management and launch entrypoint."""
+import argparse
+import contextlib
+import hashlib
+import ipaddress
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+UNIT = "app-dev.lizardbyte.app.Sunshine.service"
+GUARD_UNIT = "sunshine-mic-guard.service"
+HELPER = "/usr/lib/sunshine-mic/guard"
+DROPIN = b"[Service]\nExecStart=\nExecStart=/usr/bin/sunshine-mic launch\n"
+MAX_FILE = 1024 * 1024
+
+
+class CLIError(Exception):
+    def __init__(self, message, code=2):
+        super().__init__(message)
+        self.code = code
+
+
+def load_library():
+    # The source fallback is for unprivileged development, never root execution.
+    if os.getuid() == 0 or os.geteuid() == 0:
+        raise CLIError("Run sunshine-mic as the desktop user, not through sudo.")
+    directory = Path("/usr/lib/sunshine-mic")
+    if not directory.is_dir():
+        directory = Path(__file__).resolve().parent
+    sys.path.insert(0, str(directory))
+    try:
+        import guardlib
+    except ImportError as exc:
+        raise CLIError("The installed management library is unavailable.", 3) from exc
+    return guardlib
+
+
+def run(argv, *, data=None, okay=(0,), timeout=20):
+    try:
+        result = subprocess.run(argv, input=data, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=timeout,
+                                env={**os.environ, "LC_ALL": "C"}, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise CLIError("A required local command is unavailable or timed out.", 3) from exc
+    if result.returncode not in okay:
+        raise CLIError("A required local command failed; no automatic restart was attempted.", 3)
+    return result
+
+
+def decode_json(data):
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON key")
+            value[key] = item
+        return value
+    try:
+        return json.loads(data, object_pairs_hook=unique)
+    except (ValueError, UnicodeError) as exc:
+        raise CLIError("A local command returned invalid verification data.", 3) from exc
+
+
+def digest(profile):
+    return hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def safe_file(path, owner, *, optional=False, root=False):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        if optional:
+            return None
+        raise CLIError("A required managed file is missing.")
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_nlink != 1
+            or info.st_mode & 0o022 or info.st_size > MAX_FILE):
+        raise CLIError("Unsafe ownership, permissions or type on a managed file.")
+    check_parents(path.parent, owner, create=False, root=root)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise CLIError("A managed file changed during inspection.")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            value = stream.read(MAX_FILE + 1)
+        if len(value) > MAX_FILE:
+            raise CLIError("A managed file is too large.")
+        return value
+    finally:
+        os.close(fd)
+
+
+def check_parents(path, owner, *, create=False, root=False):
+    parts = [path, *path.parents]
+    for item in reversed(parts):
+        try:
+            info = item.lstat()
+        except FileNotFoundError:
+            if not create:
+                raise CLIError("A managed file parent directory is missing.")
+            item.mkdir(mode=0o700)
+            info = item.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in ({0} if root else {0, owner})
+                or info.st_mode & 0o022):
+            raise CLIError("Unsafe ownership, permissions or symlink in a managed path.")
+
+
+def atomic_user_write(path, data, uid):
+    check_parents(path.parent, uid, create=True)
+    safe_file(path, uid, optional=True)
+    fd, temporary = tempfile.mkstemp(prefix=".sunshine-mic-", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+class User:
+    def __init__(self):
+        if "CONFIGURATION_DIRECTORY" in os.environ:
+            raise CLIError("CONFIGURATION_DIRECTORY overrides Sunshine's config location and is unsupported; unset it explicitly.")
+        self.uid = os.getuid()
+        self.account = pwd.getpwuid(self.uid)
+        self.home = Path(self.account.pw_dir)
+        if os.environ.get("HOME", str(self.home)) != str(self.home):
+            raise CLIError("HOME differs from the desktop account's passwd home; align it explicitly.")
+        if os.environ.get("SUNSHINE_MIGRATE_CONFIG") == "1":
+            raise CLIError("Automatic legacy configuration migration is unsupported during protected management.")
+        self.config = self.xdg("XDG_CONFIG_HOME", self.home / ".config")
+        self.state = self.xdg("XDG_STATE_HOME", self.home / ".local/state")
+        self.dropin = self.config / "systemd/user" / (UNIT + ".d") / "90-sunshine-mic.conf"
+        self.receipt = self.state / "sunshine-mic/managed.json"
+
+    @staticmethod
+    def xdg(name, default):
+        value = os.environ.get(name)
+        path = Path(value) if value else default
+        if not path.is_absolute() or ".." in path.parts:
+            raise CLIError("XDG config/state directories must be absolute, normalized paths.")
+        return path
+
+    def assets(self, profile=None, *, allow_incomplete=False):
+        raw = safe_file(self.receipt, self.uid, optional=True)
+        dropin = safe_file(self.dropin, self.uid, optional=True)
+        if raw is None:
+            if dropin is not None:
+                raise CLIError("An unreceipted activation exists; refusing to adopt it.")
+            return None
+        try:
+            receipt = decode_json(raw)
+        except CLIError as exc:
+            raise CLIError("The managed activation receipt is corrupt.") from exc
+        if (not isinstance(receipt, dict)
+                or set(receipt) != {"schema", "uid", "profile_digest", "dropin_sha256", "state"}
+                or type(receipt["schema"]) is not int or receipt["schema"] != 1
+                or type(receipt["uid"]) is not int or receipt["uid"] != self.uid
+                or receipt["dropin_sha256"] != hashlib.sha256(DROPIN).hexdigest()
+                or not isinstance(receipt["state"], str)
+                or receipt["state"] not in {"activating", "active", "resetting"}
+                or not isinstance(receipt["profile_digest"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", receipt["profile_digest"])):
+            raise CLIError("The managed activation receipt has an unsupported schema.")
+        if dropin is not None and dropin != DROPIN:
+            raise CLIError("The managed activation was modified; refusing to replace it.")
+        if dropin is None and receipt["state"] == "active":
+            raise CLIError("The managed activation is missing.")
+        if not allow_incomplete and receipt["state"] != "active":
+            raise CLIError("Guard installed; activation incomplete. Rerun the same operation.", 1)
+        if profile is not None and receipt["profile_digest"] != digest(profile):
+            raise CLIError("The activation receipt does not match the authoritative profile.", 1)
+        return receipt
+
+    def save_receipt(self, profile, state):
+        value = {"schema": 1, "uid": self.uid, "profile_digest": digest(profile),
+                 "dropin_sha256": hashlib.sha256(DROPIN).hexdigest(), "state": state}
+        atomic_user_write(self.receipt, (json.dumps(value, sort_keys=True) + "\n").encode(), self.uid)
+
+
+def show_unit(name=UNIT, *, user=True):
+    argv = ["/usr/bin/systemctl"] + (["--user"] if user else [])
+    properties = ["Id", "Names", "LoadState", "ActiveState", "SubState", "FragmentPath",
+                  "DropInPaths", "ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop",
+                  "ExecStopPost", "ExecCondition", "MainPID", "UnitFileState", "Environment",
+                  "EnvironmentFiles", "UnsetEnvironment", "ConfigurationDirectory", "NeedDaemonReload"]
+    result = run(argv + ["show", name, "--no-pager", "--property=" + ",".join(properties)])
+    return dict(line.split("=", 1) for line in result.stdout.decode("utf-8", "strict").splitlines() if "=" in line)
+
+
+def validate_unit(user, receipt):
+    environment = run(["/usr/bin/systemctl", "--user", "show-environment"]).stdout.decode()
+    if any(line.startswith("CONFIGURATION_DIRECTORY=") for line in environment.splitlines()):
+        raise CLIError("The user service manager exports unsupported CONFIGURATION_DIRECTORY; unset it explicitly.")
+    for line in environment.splitlines():
+        name, separator, value = line.partition("=")
+        if separator and ((name == "HOME" and value != str(user.home))
+                          or (name == "SUNSHINE_MIGRATE_CONFIG" and value == "1")):
+            raise CLIError("The user manager exports unsupported home or legacy configuration migration settings.")
+    for name, actual, default in (("XDG_CONFIG_HOME", user.config, user.home / ".config"),
+                                  ("XDG_STATE_HOME", user.state, user.home / ".local/state")):
+        values = [line.partition("=")[2] for line in environment.splitlines()
+                  if line.startswith(name + "=")]
+        expected_root = values[0] if values else str(default)
+        if len(values) > 1 or expected_root != str(actual):
+            raise CLIError("The CLI and user service manager use different XDG roots; align them explicitly.")
+    unit = show_unit()
+    alias = show_unit("sunshine.service")
+    if unit.get("LoadState") != "loaded" or unit.get("Id") != UNIT:
+        raise CLIError("The canonical packaged Sunshine user service is unavailable.")
+    fragment = "/usr/lib/systemd/user/" + UNIT
+    if (unit.get("FragmentPath") != fragment
+            or (alias.get("LoadState") != "not-found"
+                and (alias.get("FragmentPath") != fragment or alias.get("Id") != UNIT))):
+        raise CLIError("A shadowing unit or unsupported Sunshine alias exists.")
+    names = set(unit.get("Names", "").split())
+    if UNIT not in names or names - {UNIT, "sunshine.service"}:
+        raise CLIError("Unsupported Sunshine service aliases exist.")
+    raw = safe_file(Path(fragment), 0, root=True)
+    # Validate the packaged fragment itself, not merely its last effective command.
+    starts = re.findall(rb"^ExecStart\s*=\s*(.*?)\s*$", raw, re.MULTILINE)
+    if starts != [b"/usr/bin/sunshine"]:
+        raise CLIError("Only the packaged /usr/bin/sunshine service without arguments is supported.")
+    root_unit = show_unit(user=False)
+    if root_unit.get("LoadState") not in {"not-found", "masked"}:
+        raise CLIError("A system-level Sunshine service conflicts with desktop-user management.")
+    # Spaces/escapes in unit paths are deliberately unsupported rather than guessed.
+    drops = unit.get("DropInPaths", "").split()
+    expected = [str(user.dropin)] if os.path.lexists(user.dropin) else []
+    recovering = receipt is not None and receipt["state"] in {"activating", "resetting"}
+    supported_drops = ([], [str(user.dropin)]) if recovering else (expected,)
+    if drops not in supported_drops or (expected and receipt is None):
+        raise CLIError("Unknown, legacy or shadowing Sunshine drop-ins exist.")
+    if expected and safe_file(user.dropin, user.uid) != DROPIN:
+        raise CLIError("The managed drop-in was modified.")
+    expected_start = "/usr/bin/sunshine-mic launch" if drops else "/usr/bin/sunshine"
+    executable = expected_start.split()[0]
+    start = unit.get("ExecStart", "")
+    match = re.fullmatch(r"\{ path=([^ ;]+) ; argv\[\]=(.*?) ; ignore_errors=no ; .* \}", start)
+    if not match or match.group(1) != executable or match.group(2) != expected_start:
+        raise CLIError("The effective Sunshine launch command is not supported.")
+    if unit.get("NeedDaemonReload") == "yes" and not recovering:
+        raise CLIError("The user service manager has stale unit data; reload it before setup.")
+    # No alternate hooks may execute Sunshine behind the protected launch gate.
+    for key in ("ExecStartPost", "ExecStop", "ExecStopPost", "ExecCondition", "Environment", "EnvironmentFiles", "UnsetEnvironment", "ConfigurationDirectory"):
+        if unit.get(key):
+            raise CLIError("Unsupported effective service hooks or environment overrides exist.")
+    pre = unit.get("ExecStartPre", "")
+    if not re.fullmatch(r"\{ path=/bin/sleep ; argv\[\]=/bin/sleep 5 ; ignore_errors=no ; .* \}", pre):
+        raise CLIError("The packaged Sunshine readiness prestart was overridden.")
+    return unit
+
+
+def stopped(unit):
+    if unit.get("ActiveState") not in {"inactive", "failed"} or unit.get("MainPID", "0") != "0":
+        raise CLIError("Sunshine must be fully stopped first; use a local keyboard or independent SSH session.")
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            name = (entry / "comm").read_text().strip()
+            exe = os.readlink(entry / "exe").removesuffix(" (deleted)")
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            # Root repeats the process/listener checks across all accounts.
+            try:
+                name = (entry / "comm").read_text().strip()
+            except (PermissionError, FileNotFoundError):
+                continue
+            exe = ""
+        if name == "sunshine" or exe == "/usr/bin/sunshine":
+            raise CLIError("A direct Sunshine process is still running; nothing was stopped automatically.")
+
+
+def listeners(base):
+    ports = {base - 5, base, base + 21, base + 12}
+    result = run(["/usr/bin/ss", "-H", "-lntu"])
+    for line in result.stdout.decode().splitlines():
+        fields = line.split()
+        if len(fields) < 5:
+            raise CLIError("Listener inspection returned unsupported data.", 3)
+        try:
+            port = int(fields[4].rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            continue
+        if port in ports:
+            raise CLIError("A protected service port already has a listener; stop it explicitly before setup/reset.")
+
+
+def peer_check(address=None):
+    status = decode_json(run(["/usr/bin/tailscale", "status", "--json"]).stdout)
+    if (not isinstance(status, dict) or status.get("BackendState") != "Running"
+            or not Path("/sys/class/net/tailscale0").is_dir()):
+        raise CLIError("Tailscale must already be authenticated with tailscale0 available.")
+    self_ips = status.get("Self", {}).get("TailscaleIPs", [])
+    peers = status.get("Peer", {})
+    if not isinstance(peers, dict):
+        raise CLIError("Tailscale returned unsupported peer data.", 3)
+    addresses = sorted({ip for peer in peers.values() if isinstance(peer, dict)
+                        for ip in peer.get("TailscaleIPs", []) if ":" not in ip})
+    if address is None:
+        return {"known_ipv4_peers": addresses}
+    if address in self_ips:
+        raise CLIError("The selected Tailscale address belongs to this host, not the iPad.")
+    matches = [peer for peer in peers.values() if isinstance(peer, dict)
+               and address in peer.get("TailscaleIPs", [])]
+    if len(matches) != 1:
+        raise CLIError("The selected exact IPv4 address is not a known current tailnet peer.")
+    routes = decode_json(run(["/usr/bin/ip", "-json", "route", "get", address]).stdout)
+    if not isinstance(routes, list) or not routes or any(r.get("dev") != "tailscale0" for r in routes):
+        raise CLIError("The selected peer is not routed through tailscale0; LAN fallback is not allowed.")
+    return {"online": matches[0].get("Online") is True, "route": "tailscale0",
+            "known_ipv4_peers": addresses}
+
+
+def guard(command, profile=None, *, authenticated=False):
+    argv = ["/usr/bin/sudo"] + ([] if authenticated else ["-n"])
+    argv += [HELPER, command]
+    data = None if profile is None else (json.dumps(profile, sort_keys=True) + "\n").encode()
+    result = run(argv, data=data, okay=(0, 1, 2, 3), timeout=90)
+    try:
+        payload = decode_json(result.stdout)
+    except CLIError:
+        if result.returncode:
+            raise CLIError("Root verification is unavailable; noninteractive privilege may be missing.", 3)
+        raise
+    if not isinstance(payload, dict):
+        raise CLIError("The root helper returned unsupported verification data.", 3)
+    if command != "inspect" and result.returncode:
+        raise CLIError("The guard refused the operation; protection is retained. Resolve the reported conflict or incomplete transition.", result.returncode)
+    if command != "inspect":
+        if payload.get("pending") is not False:
+            raise CLIError("The root operation did not complete its durable transition.", 1)
+        if command == "reset":
+            if payload.get("profile") is not None:
+                raise CLIError("Root reset did not remove its authoritative profile.", 1)
+        elif payload.get("protection_verified") is not True or not isinstance(payload.get("profile"), dict):
+            raise CLIError("The root operation did not verify kernel protection.", 1)
+    return payload, result.returncode
+
+
+def owned_profile(lib, user):
+    profile = lib.read_profile()
+    if profile is not None and profile["uid"] != user.uid:
+        raise CLIError("This host is configured for another desktop user.")
+    return profile
+
+
+@contextlib.contextmanager
+def completion_lock(lib, user, expected):
+    # Root mutations release their exclusive lock before returning. Revalidate under
+    # a shared lock and retain it through every user-file update and daemon reload.
+    with lib.trusted_lock(exclusive=False):
+        if owned_profile(lib, user) != expected or lib.read_pending() is not None:
+            raise CLIError("Root state changed before activation completion; rerun the intended operation.", 1)
+        yield
+
+
+def reset_config(user, lib):
+    path = user.config / "sunshine/sunshine.conf"
+    raw = safe_file(path, user.uid, optional=True)
+    try:
+        lib.validate_reset_config("" if raw is None else raw.decode("utf-8"))
+        lib.verify_disabled_binary()
+    except (UnicodeError, lib.GuardError) as exc:
+        raise CLIError("Reset requires a verified disabled-default binary and unambiguous disabled/absent saved microphone options; nothing was rewritten.") from exc
+
+
+def activate(user, profile):
+    try:
+        user.save_receipt(profile, "activating")
+        atomic_user_write(user.dropin, DROPIN, user.uid)
+        run(["/usr/bin/systemctl", "--user", "daemon-reload"])
+        user.save_receipt(profile, "active")
+    except (CLIError, OSError) as exc:
+        raise CLIError("Guard installed; activation incomplete. Rerun the identical setup/reconfigure after resolving user-file or user-manager access.", 1) from exc
+
+
+def configure(args, lib, user):
+    profile = lib.validate_profile({"schema": 1, "uid": user.uid, "base_port": args.base_port,
+                                   "client_tailscale_ipv4": args.client_tailscale_ip,
+                                   "client_lan_ips": args.client_lan_ip, "enabled": args.enable_microphone})
+    old = owned_profile(lib, user)
+    receipt = user.assets(allow_incomplete=True)
+    unit = validate_unit(user, receipt)
+    stopped(unit)
+    for base in {profile["base_port"], old["base_port"] if old else profile["base_port"]}:
+        listeners(base)
+    if args.command == "setup" and old is not None and profile != old:
+        raise CLIError("Different settings already exist; use explicit reconfigure, not setup.")
+    if args.command == "reconfigure" and old is None:
+        raise CLIError("No managed profile exists; use setup first.")
+    peers = peer_check(profile["client_tailscale_ipv4"])
+    base = profile["base_port"]
+    print(f"TCP ports: {base - 5}, {base}, {base + 21}; microphone UDP: {base + 12}.")
+    print("Known Tailscale IPv4 peers (read-only): " + ", ".join(peers["known_ipv4_peers"]))
+    print("Selected peer: " + ("online" if peers["online"] else "offline; no LAN fallback will be enabled"))
+    print("Use a local keyboard or independent SSH for setup/reconfigure/reset. Stopping Sunshine disconnects the stream; this command never stops it.")
+    if args.dry_run:
+        print("Dry run: no elevation or mutation. Root firewall/delegation checks remain unverified.")
+        return 0
+    guard("configure" if args.command == "setup" else "reconfigure", profile, authenticated=True)
+    # Root must finish its synchronous unit start before any activation is installed.
+    with completion_lock(lib, user, profile):
+        checked, code = guard("inspect")
+        if code or checked.get("pending") or checked.get("profile") != profile or checked.get("protection_verified") is not True:
+            raise CLIError("Guard installed; activation incomplete because root protection could not be verified.", 1 if code != 3 else 3)
+        activate(user, profile)
+    print("Protected setup complete. Enable startup explicitly with:")
+    print("systemctl --user enable --now " + UNIT)
+    print("Use the host's Tailscale IPv4 entry in VoidLink; allow iPad microphone access and enable its mic option before connecting.")
+    print("Select Moonlight Mic in the receiving app. This does not change the default input or transcribe audio.")
+    return 0
+
+
+def disable(lib, user):
+    profile = owned_profile(lib, user)
+    if profile is None:
+        raise CLIError("No managed profile exists; there is nothing to disable.")
+    receipt = user.assets(allow_incomplete=True)
+    unit = validate_unit(user, receipt)
+    result, _ = guard("disable", authenticated=True)
+    disabled = dict(profile, enabled=False)
+    if result.get("profile") != disabled:
+        raise CLIError("Guard installed; activation incomplete because the disabled profile changed.", 1)
+    with completion_lock(lib, user, disabled):
+        if (receipt is None or receipt["state"] != "active" or not user.dropin.exists()
+                or unit.get("NeedDaemonReload") == "yes"):
+            activate(user, disabled)
+        else:
+            # The unchanged, already-loaded wrapper reads the new disabled profile.
+            user.save_receipt(disabled, "active")
+    print("Microphone ingress denied; future protected launches use disabled microphone options.")
+    print("Sunshine was not restarted. A current socket/source may remain until disconnect or an explicit restart.")
+    return 0
+
+
+def reset(lib, user):
+    profile = owned_profile(lib, user)
+    receipt = user.assets(allow_incomplete=True)
+    if profile is None and receipt is None:
+        if lib.read_pending() is not None:
+            raise CLIError("An incomplete root transition exists; rerun the identical operation first.", 1)
+        print("No managed profile or activation exists.")
+        return 0
+    unit = validate_unit(user, receipt)
+    stopped(unit)
+    if profile:
+        listeners(profile["base_port"])
+    reset_config(user, lib)
+    if profile is not None:
+        if receipt is not None and receipt["profile_digest"] != digest(profile):
+            raise CLIError("Reset refuses a receipt that does not match the current profile.")
+        user.save_receipt(profile, "resetting")
+        guard("reset", authenticated=True)
+    elif receipt is None or receipt["state"] != "resetting":
+        raise CLIError("Root profile missing without a recorded reset; refusing to remove activation.")
+    if profile is None and lib.read_pending() is not None:
+        guard("reset", authenticated=True)
+    # The absent profile keeps the still-present wrapper fail-closed until removal.
+    with completion_lock(lib, user, None):
+        user.assets(allow_incomplete=True)
+        with contextlib.suppress(FileNotFoundError):
+            user.dropin.unlink()
+        try:
+            run(["/usr/bin/systemctl", "--user", "daemon-reload"])
+        except CLIError as exc:
+            raise CLIError("Root reset completed; user activation cleanup incomplete. Rerun reset.", 1) from exc
+        with contextlib.suppress(FileNotFoundError):
+            user.receipt.unlink()
+    print("Owned protection and activation removed; saved accounts, pairing and video configuration were not changed.")
+    return 0
+
+
+def launch(lib, user):
+    with lib.trusted_lock(exclusive=False):
+        profile = owned_profile(lib, user)
+        if profile is None:
+            raise CLIError("Protected launch refused: authoritative profile is missing.", 1)
+        if lib.read_pending() is not None:
+            raise CLIError("Protected launch refused: an incomplete root transition exists.", 1)
+        receipt = user.assets(profile)
+        if receipt is None:
+            raise CLIError("Protected launch refused: activation receipt is missing.", 1)
+        validate_unit(user, receipt)
+        applied, _ = guard("apply")
+        if applied.get("profile") != profile:
+            raise CLIError("Protected launch refused: applied profile does not match the launch profile.", 1)
+        # All shared-lock readers see the same committed profile until exec closes the fd.
+        os.environ["HOME"] = str(user.home)
+        os.environ["XDG_CONFIG_HOME"] = str(user.config)
+        os.execv("/usr/bin/sunshine", ["/usr/bin/sunshine", "port=" + str(profile["base_port"]),
+                                      "stream_mic=" + ("enabled" if profile["enabled"] else "disabled"),
+                                      "mic_default_source=disabled"])
+
+
+def process_state(unit, profile):
+    pid = unit.get("MainPID", "0")
+    if not pid.isdecimal() or pid == "0":
+        return None, False
+    try:
+        argv = (Path("/proc") / pid / "cmdline").read_bytes().split(b"\0")
+        exe = os.readlink(Path("/proc") / pid / "exe")
+    except (FileNotFoundError, PermissionError):
+        return None, True
+    if exe != "/usr/bin/sunshine":
+        return None, True
+    on = b"stream_mic=enabled" in argv
+    off = b"stream_mic=disabled" in argv
+    if profile is None:
+        return (on if on != off else None), False
+    if on == off:
+        return None, True
+    expected = (profile is not None and b"port=" + str(profile["base_port"]).encode() in argv
+                and b"mic_default_source=disabled" in argv)
+    return on, not expected or on != bool(profile and profile["enabled"])
+
+
+def direct_processes(canonical_pid, profile):
+    found = []
+    unavailable = False
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError as exc:
+        raise CLIError("Process inspection is unavailable.", 3) from exc
+    for entry in entries:
+        if not entry.name.isdecimal() or entry.name == canonical_pid:
+            continue
+        try:
+            name = (entry / "comm").read_text().strip()
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            unavailable = True
+            continue
+        try:
+            executable = os.readlink(entry / "exe").removesuffix(" (deleted)")
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            executable = ""
+        if name != "sunshine" and Path(executable).name != "sunshine":
+            continue
+        item = {"microphone_enabled": None, "base_port": None, "matches_managed_arguments": False}
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            unavailable = True
+            found.append(item)
+            continue
+        mic = [arg.partition(b"=")[2] for arg in argv if arg.startswith(b"stream_mic=")]
+        ports = [arg.partition(b"=")[2] for arg in argv if arg.startswith(b"port=")]
+        default_source = [arg.partition(b"=")[2] for arg in argv if arg.startswith(b"mic_default_source=")]
+        if len(mic) == 1 and mic[0] in {b"enabled", b"disabled"}:
+            item["microphone_enabled"] = mic[0] == b"enabled"
+        if len(ports) == 1 and ports[0].isdigit():
+            item["base_port"] = int(ports[0])
+        if profile is not None:
+            item["matches_managed_arguments"] = (executable == "/usr/bin/sunshine"
+                and item["microphone_enabled"] is profile["enabled"]
+                and item["base_port"] == profile["base_port"]
+                and default_source == [b"disabled"])
+        # Matching argv alone does not prove this process passed the protected gate.
+        found.append(item)
+    return found, unavailable
+
+
+def audio_state():
+    result = run(["/usr/bin/pw-dump"], timeout=10)
+    nodes = decode_json(result.stdout)
+    if not isinstance(nodes, list):
+        raise CLIError("PipeWire returned unsupported diagnostic data.", 3)
+    for node in nodes:
+        props = node.get("info", {}).get("props", {}) if isinstance(node, dict) else {}
+        if props.get("media.class") == "Audio/Source" and (props.get("node.description") == "Moonlight Mic"
+                                                          or props.get("node.name") == "moonlight_mic"):
+            return "present"
+    return "absent (normal without an active microphone session)"
+
+
+def traffic_evidence(kernel):
+    # Counters are cumulative since the last apply, never proof of current audio delivery.
+    rules = kernel.get("nftables", []) if isinstance(kernel, dict) else []
+    evidence = []
+    for item in rules:
+        rule = item.get("rule") if isinstance(item, dict) else None
+        if not isinstance(rule, dict):
+            continue
+        counter = None
+        verdict = None
+        for expr in rule.get("expr", []):
+            if not isinstance(expr, dict):
+                continue
+            if "counter" in expr and isinstance(expr["counter"], dict):
+                counter = expr["counter"].get("packets")
+            for action in ("accept", "drop", "reject"):
+                if action in expr:
+                    verdict = action
+        if type(counter) is int and verdict:
+            evidence.append({"verdict": verdict, "packets_since_apply": counter})
+    return evidence
+
+
+def diagnostics(args, lib, user):
+    report = {"state": "unverified", "desired_enabled": None, "protection_verified": False,
+              "running_enabled": None, "restart_required": False, "issues": [], "next_commands": []}
+    unavailable = False
+    conflict = False
+    profile = None
+    canonical_pid = "0"
+    try:
+        profile = owned_profile(lib, user)
+    except (CLIError, lib.GuardError):
+        report["issues"].append("Authoritative profile is corrupt, unsafe or belongs to another user.")
+        conflict = True
+    if profile:
+        report["desired_enabled"] = profile["enabled"]
+        report["base_port"] = profile["base_port"]
+        if args.show_addresses:
+            report["client_tailscale_ipv4"] = profile["client_tailscale_ipv4"]
+            report["client_lan_ips"] = profile["client_lan_ips"]
+    try:
+        inspected, code = guard("inspect")
+        report["protection_verified"] = (code == 0 and inspected.get("protection_verified") is True
+                                          and inspected.get("profile") == profile and not inspected.get("pending"))
+        if inspected.get("pending"):
+            report["issues"].append("An incomplete root transition blocks protected launch; rerun the identical operation.")
+        if code == 3:
+            unavailable = True
+        if code or (profile is not None and not report["protection_verified"]):
+            report["issues"].append("Kernel protection is unverified or differs from the authoritative profile.")
+        messages = {
+            "orphaned_firewall_table": "An orphaned managed firewall table exists.",
+            "delegation_missing": "The exact managed sudo delegation is missing or changed.",
+            "guard_not_boot_enabled": "The root guard is not boot-enabled.",
+            "managed_asset_conflict": "Foreign legacy or modified root-managed guard assets exist.",
+        }
+        for issue in inspected.get("issues", []):
+            if isinstance(issue, str) and issue in messages:
+                report["issues"].append(messages[issue])
+        if report["protection_verified"]:
+            report["traffic_counters"] = traffic_evidence(inspected.get("kernel"))
+        report["traffic_note"] = "Counters, when available, are since last apply, not proof of current packets or decoded audio. Other firewall chains may still deny accepted traffic."
+    except CLIError:
+        unavailable = True
+        report["issues"].append("Protection unverified: noninteractive root inspection is unavailable.")
+    try:
+        receipt = user.assets(profile)
+        unit = validate_unit(user, receipt)
+        canonical_pid = unit.get("MainPID", "0")
+        report["service"] = {k: unit.get(k) for k in ("ActiveState", "SubState", "UnitFileState")}
+        report["managed_launch"] = receipt is not None
+        report["running_enabled"], report["restart_required"] = process_state(unit, profile)
+        if profile and receipt is None:
+            report["issues"].append("Guard installed; user activation incomplete.")
+        if profile is None and receipt is not None:
+            report["issues"].append("Managed activation remains without its authoritative profile; recovery or reset cleanup is required.")
+        if profile is None and report["running_enabled"] is True:
+            report["issues"].append("The running process explicitly enables microphone input without a managed profile.")
+        if profile and profile["enabled"] and unit.get("UnitFileState") != "enabled":
+            report["issues"].append("Graphical-session startup has not been enabled explicitly.")
+            report["next_commands"].append("systemctl --user enable --now " + UNIT)
+        if report["restart_required"]:
+            report["issues"].append("The current process does not match future protected-launch settings; choose an explicit restart when safe.")
+    except CLIError as exc:
+        unavailable |= exc.code == 3
+        report["issues"].append("Effective user service or managed activation cannot be verified; possible drift or legacy override.")
+    try:
+        direct, process_unavailable = direct_processes(canonical_pid, profile)
+        report["unmanaged_processes"] = direct
+        if process_unavailable:
+            unavailable = True
+            report["issues"].append("Some process evidence is unavailable; directly started Sunshine cannot be fully verified.")
+        if direct:
+            report["restart_required"] = True
+            report["issues"].append("Directly started Sunshine processes bypass the managed launch; their microphone ports may be outside the owned guard.")
+            if any(item["microphone_enabled"] is True for item in direct):
+                report["running_enabled"] = True
+            elif any(item["microphone_enabled"] is None for item in direct):
+                report["running_enabled"] = None
+    except CLIError:
+        unavailable = True
+        report["issues"].append("Direct Sunshine process inspection is unavailable.")
+    try:
+        unit = show_unit(GUARD_UNIT, user=False)
+        report["guard_service"] = {k: unit.get(k) for k in ("ActiveState", "SubState", "UnitFileState")}
+        if profile and (unit.get("UnitFileState") != "enabled" or unit.get("ActiveState") != "active"):
+            report["issues"].append("The root guard is not both active and boot-enabled.")
+    except CLIError:
+        unavailable = True
+        report["issues"].append("Root guard service state is unavailable.")
+    if profile:
+        try:
+            peer = peer_check(profile["client_tailscale_ipv4"])
+            report["peer"] = {"online": peer["online"], "route": peer["route"]}
+            if profile["enabled"] and not peer["online"]:
+                report["issues"].append("Selected peer is offline; no LAN fallback is enabled.")
+        except CLIError as exc:
+            report["peer"] = {"online": None, "route": "unverified"}
+            if profile["enabled"]:
+                unavailable |= exc.code == 3
+                report["issues"].append("Selected peer or its tailscale0 route cannot be verified.")
+    try:
+        installed = run(["/usr/bin/pacman", "-Q", "sunshine-mic", "sunshine-mic-bin"], okay=(0, 1))
+        packages = [line.split() for line in installed.stdout.decode().splitlines()]
+        if (len(packages) != 1 or len(packages[0]) != 2
+                or packages[0][0] not in {"sunshine-mic", "sunshine-mic-bin"}):
+            raise CLIError("Exactly one supported Sunshine Mic package must be installed.", 3)
+        report["package"] = {"name": packages[0][0], "version": packages[0][1]}
+        binary = Path("/usr/bin/sunshine")
+        with binary.open("rb") as stream:
+            report["package"]["executable_sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+        version = run(["/usr/bin/sunshine", "--version"]).stdout.decode(errors="replace")
+        commit = re.search(r"\b[0-9a-f]{40}\b", version)
+        report["package"]["source_sha"] = commit.group(0) if commit else "not reported by binary"
+    except (CLIError, OSError):
+        report["package"] = {"name": "sunshine-mic", "version": "unavailable"}
+        if args.command == "doctor":
+            unavailable = True
+            report["issues"].append("Installed package/binary identity could not be verified.")
+    if args.command == "doctor":
+        try:
+            report["microphone_node"] = audio_state()
+        except CLIError:
+            report["microphone_node"] = "unavailable"
+            unavailable = True
+            report["issues"].append("The user PipeWire graph is unavailable; no audio was recorded.")
+        report["session_diagnosis"] = session_diagnosis(profile, report)
+        if report["session_diagnosis"]["microphone_socket"] == "verification unavailable":
+            unavailable = True
+            report["issues"].append("Session/socket inspection is unavailable; no packet or audio delivery claim can be made.")
+        if report["session_diagnosis"]["session_address"].startswith("mismatch:"):
+            report["issues"].append("Established Sunshine session address differs from the selected Tailscale peer.")
+        report["firewall_limitation"] = "Startup gating is not continuous tamper protection: an administrator firewall flush defeats the guard until reapplication."
+    if profile is None and not report["issues"]:
+        report["state"] = "unconfigured"
+    elif profile is not None and not report["issues"]:
+        report["state"] = "enabled" if profile["enabled"] else "disabled"
+    elif unavailable:
+        report["state"] = "unverified"
+    else:
+        report["state"] = "unhealthy"
+    if profile and not report["protection_verified"]:
+        report["next_commands"].append("sunshine-mic guard reload")
+    report["next_commands"].append("sunshine-mic doctor" if args.command == "status" else "sunshine-mic status")
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        for key, value in report.items():
+            print(key + ": " + (json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)))
+    return 2 if conflict else 3 if unavailable else 1 if report["issues"] else 0
+
+
+def session_diagnosis(profile, report):
+    result = {"microphone_socket": "unknown", "session_address": "unknown",
+              "packet_arrival": "not measured", "audio_delivery": "not measured"}
+    if profile is None:
+        result["microphone_socket"] = "not configured"
+        return result
+    try:
+        sockets = run(["/usr/bin/ss", "-H", "-an", "-t", "-u"]).stdout.decode().splitlines()
+        microphone = str(profile["base_port"] + 12)
+        tcp_ports = {str(profile["base_port"] - 5), str(profile["base_port"]), str(profile["base_port"] + 21)}
+        result["microphone_socket"] = "absent (normal without a microphone session)"
+        sources = set()
+        for line in sockets:
+            fields = line.split()
+            if len(fields) < 6:
+                continue
+            local, remote = fields[4], fields[5]
+            port = local.rsplit(":", 1)[-1]
+            if fields[0] == "udp" and port == microphone:
+                result["microphone_socket"] = "present"
+            if fields[0] == "tcp" and fields[1] == "ESTAB" and port in tcp_ports:
+                address = remote.rsplit(":", 1)[0].strip("[]")
+                with contextlib.suppress(ValueError):
+                    sources.add(str(ipaddress.ip_address(address)))
+        if sources:
+            result["session_address"] = ("selected Tailscale peer" if sources == {profile["client_tailscale_ipv4"]}
+                                         else "mismatch: an established Sunshine connection uses another address; reconnect using the manually added host Tailscale address")
+        counters = report.get("traffic_counters", [])
+        if counters:
+            accepts = sum(c["packets_since_apply"] for c in counters if c["verdict"] == "accept")
+            drops = sum(c["packets_since_apply"] for c in counters if c["verdict"] == "drop")
+            if accepts:
+                result["packet_arrival"] = "allowed microphone traffic observed since apply; downstream firewall/receiver delivery is not proven"
+            elif drops:
+                result["packet_arrival"] = "guard denied microphone traffic since apply; check peer/interface and client host selection"
+            else:
+                result["packet_arrival"] = "no matching microphone packets counted since apply; current arrival is not measured"
+    except CLIError:
+        result["microphone_socket"] = "verification unavailable"
+    return result
+
+
+def parser():
+    root = argparse.ArgumentParser(description="Protected Sunshine Mic setup for one desktop user and one Tailscale iPad peer.")
+    commands = root.add_subparsers(dest="command", required=True)
+    for name in ("setup", "reconfigure"):
+        command = commands.add_parser(name, help="Requires Sunshine stopped and independent local/SSH access; never stops it automatically")
+        command.add_argument("--base-port", required=True, type=int, help="Explicit intended Sunshine base (ordinary default 47989); changes all service ports")
+        command.add_argument("--client-tailscale-ip", required=True)
+        command.add_argument("--client-lan-ip", action="append", default=[], help="Known exact alternate IPv4/IPv6 address; repeatable, never a subnet")
+        command.add_argument("--enable-microphone", required=True, action="store_true")
+        command.add_argument("--dry-run", action="store_true")
+    for name in ("status", "doctor"):
+        command = commands.add_parser(name)
+        command.add_argument("--json", action="store_true")
+        command.add_argument("--show-addresses", action="store_true", help="Reveal profile addresses only, never credentials or tailnet names")
+    command = commands.add_parser("guard")
+    command.add_subparsers(dest="guard_command", required=True).add_parser("reload")
+    commands.add_parser("disable")
+    commands.add_parser("reset", help="Requires stopped Sunshine and disabled/absent saved mic options; use independent access")
+    commands.add_parser("launch", help="Internal protected service entrypoint; accepts no arguments")
+    return root
+
+
+def main():
+    args = parser().parse_args()
+    lib = None
+    try:
+        lib = load_library()
+        user = User()
+        if args.command in {"setup", "reconfigure"}:
+            return configure(args, lib, user)
+        if args.command in {"status", "doctor"}:
+            return diagnostics(args, lib, user)
+        if args.command == "launch":
+            return launch(lib, user)
+        if args.command == "disable":
+            return disable(lib, user)
+        if args.command == "reset":
+            return reset(lib, user)
+        if args.command == "guard":
+            owned_profile(lib, user)
+            guard("apply")
+            print("Guard reapplied; Sunshine was not restarted. Other firewall chains can still deny traffic.")
+            return 0
+    except Exception as exc:
+        expected = isinstance(exc, (CLIError, OSError, ValueError, KeyError)) or (lib is not None and isinstance(exc, lib.GuardError))
+        safe_error = isinstance(exc, CLIError) or (lib is not None and isinstance(exc, lib.GuardError))
+        message = str(exc) if safe_error else "Local management failed; no automatic service stop/restart or protection cleanup was attempted."
+        code = getattr(exc, "code", 3) if expected else 3
+        if args.command in {"status", "doctor"} and args.json:
+            print(json.dumps({"state": "unverified", "desired_enabled": None, "protection_verified": False,
+                              "running_enabled": None, "restart_required": False, "issues": [message], "next_commands": []}))
+        else:
+            print(message, file=sys.stderr)
+        return code
+    return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

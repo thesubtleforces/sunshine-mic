@@ -1,38 +1,408 @@
 ---
-name: CI-Release
-permissions: {}
+name: Community preview publication
+run-name: Publish ${{ inputs.tag }} from candidate ${{ inputs.candidate_run_id }}
 
+# This workflow is deliberately never dispatched by CI. Publication stays blocked
+# until an actual candidate is qualified and the protected tag/environment exist.
+# qualification_report is a JSON string, reviewed before environment approval:
+# {"redacted":true,"source_commit":"<40 hex>","package_sha256":"<64 hex>",
+#  "executable_sha256":"<64 hex>","candidate_run_id":"<decimal>",
+#  "versions":{"host":"...","ipad_os":"...","voidlink":"...","encoder":"..."},
+#  "evidence":{"receiver":"...","guard":"...","firewall":"...",
+#  "package_lifecycle":"...","reboot":"...","ipad_voidlink":"...","video":"...",
+#  "repository_controls":"actual review of tag bypass actors and environment settings"},
+#  "demo":{"url":"https://...","verified":true,"consented":true,"redacted":true}}
+# Each evidence value records actual observations on disposable infrastructure,
+# not a planned check. A real public, consented and redacted demo is required;
+# publication remains blocked when that demonstration is unavailable.
+# Machine checks bind the report to the bytes; reviewers must assess its truth,
+# including repository_controls: verify maintainer-only tag bypass in Settings.
+# GitHub may hide bypass identities from the narrow workflow token. When hidden,
+# that explicit configuration review is required instead of a broader secret.
+# API errors and missing active protection/approval remain publication blockers.
 on:
-  release:
-    types:
-      - prereleased
-      - released
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing protected mic-vYYYY.MDD.HHMMSS tag (dispatch on this same tag)
+        required: true
+        type: string
+      candidate_run_id:
+        description: Successful push-to-mic ci.yml run ID, never a PR run
+        required: true
+        type: string
+      package_sha256:
+        description: SHA256 of the exact package qualified on disposable infrastructure
+        required: true
+        type: string
+      qualification_report:
+        description: Redacted qualification JSON; schema and evidence requirements are in this workflow
+        required: true
+        type: string
 
+permissions: {}
 concurrency:
-  group: "_${{ github.workflow }}-${{ github.ref }}"
-  cancel-in-progress: true
+  group: sunshine-mic-preview-publication
+  cancel-in-progress: false
 
 jobs:
-  copr:
-    name: Copr
+  publish:
+    name: Publish qualified preview
+    if: github.repository == 'thesubtleforces/sunshine-mic' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: community-preview
     permissions:
-      contents: write  # needed to update releases
-    uses: ./.github/workflows/ci-copr.yml
-    secrets:
-      COPR_BETA_WEBHOOK_TOKEN: ${{ secrets.COPR_BETA_WEBHOOK_TOKEN }}
-      COPR_STABLE_WEBHOOK_TOKEN: ${{ secrets.COPR_STABLE_WEBHOOK_TOKEN }}
-      COPR_CLI_CONFIG: ${{ secrets.COPR_CLI_CONFIG }}
-      VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+      contents: write
+      actions: read
+      attestations: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_PROMPT_DISABLED: '1'
+      RELEASE_TAG: ${{ inputs.tag }}
+      CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+      EXPECTED_PACKAGE_SHA256: ${{ inputs.package_sha256 }}
+      QUALIFICATION_REPORT: ${{ inputs.qualification_report }}
+      DISPATCH_ACTOR: ${{ github.actor }}
+      TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      DISPATCH_REF: ${{ github.ref }}
+      DISPATCH_SHA: ${{ github.sha }}
+      DISPATCH_REF_PROTECTED: ${{ github.ref_protected }}
+    steps:
+      # No checkout: even the tagged PKGBUILD is only parsed as data over the API.
+      # No downloaded executable, repository script, archive hook or recipe runs.
+      - name: Validate authority, immutable candidate and qualification
+        id: candidate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import ipaddress
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import stat
+          import subprocess
+          import urllib.parse
+          import zipfile
 
-  cloudsmith:
-    name: Cloudsmith
-    if: startsWith(github.repository, 'LizardByte/')
-    needs: copr
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci-cloudsmith.yml
-    with:
-      release_tag: ${{ github.event.release.tag_name }}
-      repository: ${{ github.event.action == 'prereleased' && 'beta' || 'stable' }}
-    secrets:
-      CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          REPO = 'thesubtleforces/sunshine-mic'
+          ROOT = 'repos/' + REPO
+          PROJECT = 'https://github.com/' + REPO
+          TAG = os.environ['RELEASE_TAG']
+          RUN = os.environ['CANDIDATE_RUN_ID']
+          SHA = os.environ['DISPATCH_SHA']
+          EXPECTED = os.environ['EXPECTED_PACKAGE_SHA256']
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit('Publication refused: ' + message)
+
+          def unique(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, 'duplicate JSON key')
+                  result[key] = value
+              return result
+
+          def api(path):
+              result = subprocess.run(['gh', 'api', '--method', 'GET',
+                  '-H', 'X-GitHub-Api-Version: 2022-11-28', path],
+                  check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+              return json.loads(result.stdout, object_pairs_hook=unique)
+
+          def pages(path, key=None):
+              result = []
+              for page in range(1, 101):
+                  data = api(path + ('&' if '?' in path else '?') + 'per_page=100&page=' + str(page))
+                  batch = data[key] if key else data
+                  result.extend(batch)
+                  if len(batch) < 100:
+                      return result
+              raise SystemExit('Publication refused: API pagination bound exceeded')
+
+          def maintainer(login):
+              permission = api(ROOT + '/collaborators/' + urllib.parse.quote(login, safe='') + '/permission')
+              return permission.get('role_name') in {'admin', 'maintain'}
+
+          def commit_at_tag():
+              obj = api(ROOT + '/git/ref/tags/' + TAG)['object']
+              for _ in range(8):
+                  if obj['type'] == 'commit':
+                      return obj['sha']
+                  require(obj['type'] == 'tag', 'tag does not resolve to a commit')
+                  obj = api(ROOT + '/git/tags/' + obj['sha'])['object']
+              raise SystemExit('Publication refused: excessive annotated tag nesting')
+
+          def no_release():
+              # Listing also includes drafts visible to this token. No update or clobber path.
+              require(not any(release['tag_name'] == TAG for release in pages(ROOT + '/releases')),
+                      'a release already exists for this tag, including a draft')
+
+          require(os.environ['GITHUB_REPOSITORY'] == REPO, 'wrong repository')
+          require(os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch', 'not an explicit dispatch')
+          require(re.fullmatch(r'mic-v[0-9]{4}\.[0-9]{3,4}\.[0-9]{6}', TAG), 'invalid tag')
+          require(re.fullmatch(r'[1-9][0-9]*', RUN), 'invalid candidate run ID')
+          require(re.fullmatch(r'[0-9a-f]{64}', EXPECTED), 'invalid package SHA256')
+          require(re.fullmatch(r'[0-9a-f]{40}', SHA), 'invalid dispatch commit')
+          require(os.environ['DISPATCH_REF'] == 'refs/tags/' + TAG, 'dispatch ref must be the requested tag')
+          require(os.environ['DISPATCH_REF_PROTECTED'] == 'true', 'dispatch tag is not protected')
+          require(maintainer(os.environ['DISPATCH_ACTOR']) and maintainer(os.environ['TRIGGERING_ACTOR']),
+                  'dispatch and rerun actors must both have maintain/admin role')
+          require(commit_at_tag() == SHA, 'tag commit differs from dispatch commit')
+          no_release()
+
+          # Use the deliberately simple protected mic-v* namespace, not an
+          # approximation of GitHub fnmatch for arbitrary ruleset expressions.
+          tag_rules = set()
+          for brief in pages(ROOT + '/rulesets?includes_parents=true'):
+              if brief.get('target') != 'tag' or brief.get('enforcement') != 'active':
+                  continue
+              ruleset = api(ROOT + '/rulesets/' + str(brief['id']))
+              refs = ruleset.get('conditions', {}).get('ref_name', {})
+              if refs.get('exclude') or not set(refs.get('include', [])) & {'refs/tags/mic-v*', 'refs/tags/' + TAG, '~ALL'}:
+                  continue
+              bypass = ruleset.get('bypass_actors', [])
+              if 'bypass_actors' not in ruleset:
+                  # GitHub documents that only ruleset writers see this field.
+                  # Do not acquire an administration PAT just for publication.
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                      summary.write('Tag bypass identities are hidden from this token; '
+                                    'repository_controls evidence and environment approval '
+                                    'must cover the maintainer-only Settings review.\n')
+              for actor in bypass:
+                  if actor['actor_type'] == 'RepositoryRole':
+                      require(actor.get('actor_id') == 5, 'tag bypass role must be repository Admin')
+                  elif actor['actor_type'] == 'User':
+                      login = api('user/' + str(actor['actor_id']))['login']
+                      require(maintainer(login), 'tag bypass user is not a maintainer')
+                  else:
+                      require(False, 'tag bypass must be Admin role or individually verified maintainer users')
+              tag_rules.update(rule['type'] for rule in ruleset['rules'])
+          require({'creation', 'update', 'deletion'} <= tag_rules, 'active maintainer-only tag restrictions missing')
+          branch_rules = pages(ROOT + '/rules/branches/mic')
+          require({'non_fast_forward', 'deletion', 'required_status_checks'} <= {r['type'] for r in branch_rules},
+                  'mic must protect force pushes/deletion and require CI')
+          checks = [check['context'] for rule in branch_rules if rule['type'] == 'required_status_checks'
+                    for check in rule['parameters']['required_status_checks']]
+          require(any(check.split(' / ')[-1] == 'Arch candidate' for check in checks), 'Arch candidate is not a required check')
+          environment = api(ROOT + '/environments/community-preview')
+          reviewers = [rule for rule in environment.get('protection_rules', [])
+                       if rule['type'] == 'required_reviewers' and rule.get('reviewers')]
+          require(reviewers, 'community-preview must require manual approval')
+          # Some API responses omit the UI admin-bypass setting. Enforce it
+          # whenever exposed and always verify a real approval on this run.
+          if 'can_admins_bypass' in environment:
+              require(environment['can_admins_bypass'] is False, 'environment admin bypass must be disabled')
+          approvals = api(ROOT + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '/approvals')
+          require(any(review['state'] == 'approved'
+                      and any(env['id'] == environment['id'] for env in review['environments'])
+                      and maintainer(review['user']['login']) for review in approvals),
+                  'this publication run needs an actual maintainer environment approval')
+          policy = environment.get('deployment_branch_policy') or {}
+          require(policy.get('custom_branch_policies') is True, 'preview environment must restrict deployment tags')
+          policies = pages(ROOT + '/environments/community-preview/deployment-branch-policies', 'branch_policies')
+          require(policies and all(p.get('type') == 'tag' and p['name'] == 'mic-v*' for p in policies),
+                  'preview environment must allow only mic-v* tags')
+
+          workflow = api(ROOT + '/actions/workflows/ci.yml')
+          run = api(ROOT + '/actions/runs/' + RUN)
+          require(run['workflow_id'] == workflow['id'] and run['path'] == '.github/workflows/ci.yml', 'wrong candidate workflow')
+          require(run['event'] == 'push' and run['head_branch'] == 'mic' and run['head_sha'] == SHA,
+                  'candidate must be a push to mic at the tagged SHA')
+          require(run['status'] == 'completed' and run['conclusion'] == 'success', 'candidate CI did not succeed')
+          require(run['repository']['full_name'] == REPO and run['head_repository']['full_name'] == REPO,
+                  'candidate came from another repository')
+          referenced = run.get('referenced_workflows', [])
+          require(any(item.get('sha') == SHA and item.get('path', '').split('@')[0]
+                      == REPO + '/.github/workflows/ci-archlinux.yml' for item in referenced),
+                  'candidate must use the reusable Arch workflow at the same tested SHA')
+          jobs = pages(ROOT + '/actions/runs/' + RUN + '/jobs?filter=latest', 'jobs')
+          require(any(job['name'].split(' / ')[-1] == 'Arch candidate' and job['conclusion'] == 'success'
+                      for job in jobs), 'successful Arch candidate job missing')
+
+          recipe = api(ROOT + '/contents/packaging/omarchy/PKGBUILD?ref=' + SHA)
+          require(recipe.get('encoding') == 'base64', 'recipe contents unavailable')
+          text = base64.b64decode(recipe['content'], validate=False).decode('utf-8')
+          def scalar(name, pattern):
+              values = re.findall(r'^' + name + r'=(' + pattern + r')\s*$', text, re.MULTILINE)
+              require(len(values) == 1, 'recipe must contain one literal ' + name)
+              return values[0]
+          version = scalar('pkgver', r'[0-9]{4}\.[0-9]{3,4}\.[0-9]{6}')
+          pkgrel = scalar('pkgrel', r'[1-9][0-9]*')
+          require(TAG == 'mic-v' + version, 'tag does not match recipe version')
+          package = 'sunshine-mic-' + version + '-' + pkgrel + '-x86_64.pkg.tar.zst'
+          corresponding = 'sunshine-mic-' + version + '-corresponding-source.tar.zst'
+          downstream = 'sunshine-mic-' + version + '-downstream-source.tar.gz'
+          subjects = {package, corresponding, downstream}
+          expected_files = subjects | {'provenance.json', 'SHA256SUMS'}
+          artifacts = pages(ROOT + '/actions/runs/' + RUN + '/artifacts', 'artifacts')
+          matches = [a for a in artifacts if a['name'] == 'sunshine-mic-candidate-' + SHA]
+          require(len(matches) == 1 and not matches[0]['expired'], 'exact unexpired candidate artifact missing or ambiguous')
+          artifact = matches[0]
+          require(artifact['workflow_run']['id'] == int(RUN) and artifact['workflow_run']['head_sha'] == SHA,
+                  'artifact is not bound to the trusted run')
+          require(0 < artifact['size_in_bytes'] <= 4 * 1024**3, 'candidate artifact size out of bounds')
+          output = Path(os.environ['RUNNER_TEMP']) / 'sunshine-mic-release'
+          output.mkdir(mode=0o700)
+          archive = output / 'candidate.zip'
+          with archive.open('xb') as stream:
+              subprocess.run(['gh', 'api', ROOT + '/actions/artifacts/' + str(artifact['id']) + '/zip'],
+                             stdout=stream, check=True)
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').hexdigest()
+          if artifact.get('digest'):
+              require(artifact['digest'] == 'sha256:' + digest(archive), 'GitHub artifact digest mismatch')
+          payload = output / 'payload'
+          payload.mkdir()
+          with zipfile.ZipFile(archive) as zipped:
+              entries = zipped.infolist()
+              require(len(entries) == len(expected_files) and {entry.filename for entry in entries} == expected_files,
+                      'candidate must contain exactly the five flat release files')
+              require(sum(entry.file_size for entry in entries) <= 8 * 1024**3, 'uncompressed artifact size out of bounds')
+              for entry in entries:
+                  mode = entry.external_attr >> 16
+                  require(not entry.is_dir() and stat.S_IFMT(mode) in {0, stat.S_IFREG}, 'non-regular candidate member')
+                  with zipped.open(entry) as source, (payload / entry.filename).open('xb') as target:
+                      shutil.copyfileobj(source, target)
+          archive.unlink()
+          hashes = {name: digest(payload / name) for name in expected_files}
+          require(hashes[package] == EXPECTED, 'package differs from the qualified SHA256')
+          manifest = json.loads((payload / 'provenance.json').read_text(), object_pairs_hook=unique)
+          require(manifest['schema'] == 1 and manifest['project'] == PROJECT and manifest['branch'] == 'mic', 'invalid provenance identity')
+          require(manifest['source_commit'] == SHA and manifest['tag'] == TAG and manifest['version'] == version
+                  and manifest['pkgrel'] == int(pkgrel) and manifest['ci_run'] == PROJECT + '/actions/runs/' + RUN,
+                  'provenance does not match tag, recipe and trusted run')
+          require(manifest['package']['file'] == package and manifest['package']['sha256'] == EXPECTED
+                  and manifest['package']['executable'] == 'usr/bin/sunshine'
+                  and re.fullmatch(r'[0-9a-f]{64}', manifest['package']['executable_sha256']), 'invalid package provenance')
+          require(manifest['artifacts'] == {name: hashes[name] for name in subjects}, 'source/package manifest hashes differ')
+          sums = {}
+          for line in (payload / 'SHA256SUMS').read_text().splitlines():
+              match = re.fullmatch(r'([0-9a-f]{64})  ([A-Za-z0-9_.-]+)', line)
+              require(match and match[2] not in sums, 'malformed or duplicate checksum record')
+              sums[match[2]] = match[1]
+          require(sums == {name: hashes[name] for name in expected_files - {'SHA256SUMS'}}, 'candidate checksums differ')
+
+          raw = os.environ['QUALIFICATION_REPORT']
+          require(100 <= len(raw.encode()) <= 60000, 'qualification report is empty or too large')
+          require(not re.search(r'-----BEGIN|\bgh[pousr]_[A-Za-z0-9]+|github_pat_|/home/|/Users/|\.ts\.net\b', raw),
+                  'qualification contains possible private material; redact before dispatch')
+          for value in re.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', raw):
+              try:
+                  address = ipaddress.ip_address(value)
+              except ValueError:
+                  continue
+              require(address.is_global, 'qualification contains a non-public address')
+          report = json.loads(raw, object_pairs_hook=unique)
+          require(set(report) == {'redacted', 'source_commit', 'package_sha256', 'executable_sha256', 'candidate_run_id', 'versions', 'evidence', 'demo'},
+                  'qualification schema differs from the documented fields')
+          require(report['redacted'] is True and report['source_commit'] == SHA and report['package_sha256'] == EXPECTED
+                  and report['candidate_run_id'] == RUN and report['executable_sha256'] == manifest['package']['executable_sha256'],
+                  'qualification must be redacted and bound to this exact candidate and executable')
+          for key in ('host', 'ipad_os', 'voidlink', 'encoder'):
+              require(isinstance(report['versions'].get(key), str) and report['versions'][key].strip(), 'missing observed version: ' + key)
+          for key in ('receiver', 'guard', 'firewall', 'package_lifecycle', 'reboot', 'ipad_voidlink', 'video', 'repository_controls'):
+              evidence = report['evidence'].get(key)
+              require(isinstance(evidence, str) and len(evidence.strip()) >= 20, 'missing actual qualification evidence: ' + key)
+          demo = report['demo']
+          require(isinstance(demo, dict) and set(demo) == {'url', 'verified', 'consented', 'redacted'}
+                  and all(demo[key] is True for key in ('verified', 'consented', 'redacted')),
+                  'a real public demo with verified, consented, redacted evidence is required')
+          require(isinstance(demo['url'], str), 'demo URL must be a string')
+          url = urllib.parse.urlsplit(demo['url'])
+          require(url.scheme == 'https' and url.hostname and not url.username and not url.password
+                  and not url.query and not url.fragment and not re.search(r'[\s<>`\\]', demo['url']),
+                  'demo must be a public HTTPS URL without credentials or query/fragment')
+          try:
+              demo_address = ipaddress.ip_address(url.hostname)
+          except ValueError:
+              require('.' in url.hostname and not url.hostname.endswith(('.localhost', '.local', '.internal', '.home.arpa')),
+                      'demo hostname must be public')
+          else:
+              require(demo_address.is_global, 'demo address must be public')
+          report_path = payload / 'qualification.json'
+          report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          # Preserve the candidate's SHA256SUMS unchanged. A separate checksum
+          # binds the manually supplied qualification record and candidate sums.
+          (payload / 'PUBLICATION-SHA256SUMS').write_text(''.join(
+              digest(payload / name) + '  ' + name + '\n' for name in sorted(expected_files | {'qualification.json'})))
+          notes = ('# Sunshine Mic — Community preview 1\n\n'
+              'Use your iPad microphone in Linux apps while streaming your Omarchy desktop. '
+              'This is an independent Sunshine fork, not an official Sunshine or Omarchy release.\n\n'
+              'Preview scope: Arch/Omarchy x86_64, PipeWire, Tailscale, and microphone-capable '
+              'VoidLink on iPad. Stock Moonlight does not send microphone audio. '
+              'Other clients and hardware remain unverified.\n\n'
+              '[Protected installation and rollback](' + PROJECT + '/blob/' + TAG + '/packaging/omarchy/README.md) · '
+              '[Support](' + PROJECT + '/issues)\n\n'
+              'This is a manually qualified preview, not stable or an official repository/AUR availability claim. '
+              'Review qualification.json for the actual versions, observations and limitations. '
+              'The input is named **Moonlight Mic**; this product does not provide transcription.\n\n'
+              'Candidate: ' + PROJECT + '/actions/runs/' + RUN + '\n\n'
+              'Source commit: `' + SHA + '`\n\nPackage SHA256: `' + EXPECTED + '`\n\n'
+              'The package bytes were preserved from that CI run. Corresponding Source, downstream source, '
+              'provenance and checksums are attached. GitHub attestations identify this publication workflow; '
+              'they do not replace the candidate build record or prove manual qualification.\n\n')
+          notes += 'Verified, consented and redacted qualification demonstration: <' + demo['url'] + '>\n'
+          (output / 'release-notes.txt').write_text(notes)
+          # Only validated fixed-format values become action outputs.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('payload=' + str(payload) + '\n')
+              stream.write('notes=' + str(output / 'release-notes.txt') + '\n')
+              stream.write('checksums=' + str(payload / 'PUBLICATION-SHA256SUMS') + '\n')
+          PY
+
+      - name: Attest exact package, sources, provenance and qualification
+        id: attest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-checksums: ${{ steps.candidate.outputs.checksums }}
+
+      - name: Publish immutable prerelease without rebuilding or clobbering
+        shell: bash
+        env:
+          PAYLOAD: ${{ steps.candidate.outputs.payload }}
+          NOTES: ${{ steps.candidate.outputs.notes }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          repo = 'thesubtleforces/sunshine-mic'
+          tag = os.environ['RELEASE_TAG']
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path]))
+          obj = api('repos/' + repo + '/git/ref/tags/' + tag)['object']
+          for _ in range(8):
+              if obj['type'] == 'commit':
+                  break
+              if obj['type'] != 'tag':
+                  raise SystemExit('Publication refused: tag no longer resolves to a commit')
+              obj = api('repos/' + repo + '/git/tags/' + obj['sha'])['object']
+          if obj['type'] != 'commit' or obj['sha'] != os.environ['DISPATCH_SHA']:
+              raise SystemExit('Publication refused: tag moved after validation')
+          # A second check closes the approval/download/attestation window.
+          # A concurrently created release also makes gh release create fail.
+          for page in range(1, 101):
+              releases = api('repos/' + repo + '/releases?per_page=100&page=' + str(page))
+              if any(release['tag_name'] == tag for release in releases):
+                  raise SystemExit('Publication refused: release already exists; never clobber assets')
+              if len(releases) < 100:
+                  break
+          else:
+              raise SystemExit('Publication refused: release pagination bound exceeded')
+          files = sorted(str(path) for path in Path(os.environ['PAYLOAD']).iterdir())
+          files.append(os.environ['ATTESTATION_BUNDLE'])
+          subprocess.run(['gh', 'release', 'create', tag, '--repo', repo, '--verify-tag',
+                          '--prerelease', '--latest=false', '--title', 'Sunshine Mic — Community preview 1',
+                          '--notes-file', os.environ['NOTES'], *files], check=True)
+          PY

@@ -1,188 +1,67 @@
 ---
-name: Bug Report
-description: Create a bug report to help us improve.
+name: Bug report or troubleshooting
+description: Get help with Sunshine Mic microphone forwarding or report a reproducible problem.
 body:
   - type: markdown
     attributes:
-      value: >
-        **THIS IS NOT THE PLACE TO ASK FOR SUPPORT!**
-        Please use our [Support Center](https://app.lizardbyte.dev/support) for support issues.
-        Before creating an issue, please review our
-        [AI Community Rules](https://docs.lizardbyte.dev/latest/community/community_rules.html#ai-generated-content).
-        AI generated issues and non actionable bug reports will be LOCKED and CLOSED!
-  - type: checkboxes
+      value: |
+        Thanks for helping improve this independent community preview. Qualification and publication are pending; no released preview is claimed yet.
+        See the [installation guide](https://github.com/thesubtleforces/sunshine-mic/blob/mic/packaging/omarchy/README.md) and search [existing issues](https://github.com/thesubtleforces/sunshine-mic/issues) if you can.
+        Support is best effort, with no guaranteed response time. Unknown details are okay: say what you could not obtain.
+        **This issue is public.** Never post credentials, pairing material, audio recordings, full configuration files, or private host/tailnet details.
+        Report suspected vulnerabilities [privately](https://github.com/thesubtleforces/sunshine-mic/security/advisories/new).
+  - type: input
+    id: version
     attributes:
-      label: Is there an existing issue for this?
-      description: Please search to see if an issue already exists for the bug you encountered.
-      options:
-        - label: I have searched the existing issues
-  - type: checkboxes
-    attributes:
-      label: Is your issue described in the documentation?
-      description: Please read our [documentation](https://docs.lizardbyte.dev/projects/sunshine)
-      options:
-        - label: I have read the documentation
-  - type: dropdown
-    attributes:
-      label: Is your issue present in the latest beta/pre-release?
-      description: Please test the latest [pre-release](https://github.com/LizardByte/Sunshine/releases).
-      options:
-        - "I didn't read the issue template"
-        - "I'm too lazy to test"
-        - "This issue is present in the latest pre-release"
-  - type: textarea
-    id: description
-    attributes:
-      label: Describe the Bug
-      description: |
-        A clear and concise description of the bug, list the reproduction steps.
-        :warning: Errors in log messages are NOT bugs. Read the message and fix what it's telling you. :warning:
+      label: Package version and source SHA
+      description: Include the Sunshine Mic version, full source commit if known, and package SHA256 if available. Say unknown when unavailable.
     validations:
       required: true
   - type: textarea
-    id: expected
+    id: distribution
     attributes:
-      label: Expected Behavior
-      description: A clear and concise description of what you expected to happen.
-  - type: textarea
-    id: additional
-    attributes:
-      label: Additional Context
-      description: Add any other context about the bug here.
-  - type: dropdown
-    id: os
-    attributes:
-      label: Host Operating System
-      description: What version operating system are you running the software on?
-      options:
-        - Docker
-        - FreeBSD
-        - Linux
-        - macOS
-        - Windows
-        - other, n/a
+      label: Installation or distribution path
+      description: How did you obtain it? Include the source commit, CI run, or package download URL as applicable; remove private filesystem paths. Prepared AUR/Omarchy routes are not published packages.
     validations:
       required: true
   - type: input
-    id: os-version
+    id: host
     attributes:
-      label: Operating System Version
-      description: Provide the version of the operating system. Additionally a build number would be helpful.
-    validations:
-      required: true
-  - type: dropdown
-    id: os-architecture
-    attributes:
-      label: Architecture
-      options:
-        - amd64/x86_64
-        - arm64/aarch64
-        - other, n/a
-    validations:
-      required: true
-  - type: dropdown
-    id: package_type
-    attributes:
-      label: Package
-      description: The package you installed
-      options:
-        - FreeBSD
-        - Linux - AppImage
-        - Linux - AUR (Third Party)
-        - Linux - deb
-        - Linux - Docker
-        - Linux - Fedora Copr
-        - Linux - flathub/flatpak
-        - Linux - Homebrew
-        - Linux - LizardByte/pacman-repo
-        - Linux - nixpkgs (Third Party)
-        - Linux - solus (Third Party)
-        - Linux - Unraid (Third Party)
-        - macOS - dmg
-        - macOS - Homebrew
-        - Windows - Chocolatey (Third Party)
-        - Windows - exe installer
-        - Windows - msi installer (recommended)
-        - Windows - portable (NOT recommended)
-        - Windows - Scoop (Third Party)
-        - Windows - Winget
-        - other (not listed)
-        - other (self built)
-        - other (fork of this repo)
-        - n/a
-    validations:
-      required: true
-  - type: dropdown
-    id: graphics_type
-    attributes:
-      label: GPU Type
-      description: The type of the installed graphics card.
-      options:
-        - AMD
-        - Apple Silicon
-        - Intel
-        - NVIDIA
-        - Qualcomm (mediafoundation)
-        - none (software encoding)
-        - n/a
+      label: Omarchy or Arch version and host architecture
+      description: Include your host distribution/version and architecture (the preview targets x86_64).
     validations:
       required: true
   - type: input
-    id: graphics_model
+    id: client
     attributes:
-      label: GPU Model
-      description: The model of the installed graphics card.
+      label: iPadOS and VoidLink versions
+      description: Include both versions and whether microphone permission and VoidLink's microphone option are enabled. Stock Moonlight does not forward microphone audio.
     validations:
       required: true
-  - type: input
-    id: graphics_driver
-    attributes:
-      label: GPU Driver/Mesa Version
-      description: The driver/mesa version of the installed graphics card.
-    validations:
-      required: true
-  - type: dropdown
-    id: capture_method
-    attributes:
-      label: Capture Method
-      description: The capture method being used.
-      options:
-        - AVCaptureScreen (macOS)
-        - KMS (Linux)
-        - NvFBC (Linux)
-        - wlroots (FreeBSD/Linux)
-        - X11 (FreeBSD/Linux)
-        - XDG Portal Grab (FreeBSD/Linux)
-        - Desktop Duplication API (Windows)
-        - Windows.Graphics.Capture (Windows)
-    validations:
-      required: false
   - type: textarea
-    id: apps
+    id: symptoms
     attributes:
-      label: Apps
-      description: |
-        If this is an issue with launching a game or app, please copy and paste your `apps.json` file.
-      render: json
+      label: Symptoms and expected behavior
+      description: What happened, and what did you expect? Include whether Moonlight Mic appears and whether the problem occurs before, during, or after a streaming session.
     validations:
-      required: false
+      required: true
   - type: textarea
-    id: logs
+    id: reproduction
     attributes:
-      label: Log output
-      description: |
-        Copy and paste logs from web-ui troubleshooting page.
-        This will be automatically formatted into code, so no need for backticks.
-        :warning: If full logs are not provided, the issue will be closed! :warning:
-      render: shell
+      label: Steps to reproduce
+      description: Describe the smallest sequence you know. If intermittent, say so; do not restart or reconfigure a production session just to file this report.
     validations:
-      required: false
-  - type: input
-    id: logs_link
+      required: true
+  - type: textarea
+    id: doctor
     attributes:
-      label: Online logs
-      description: |
-        If logs are too long to include in the field above,
-        create a [gist](https://gist.github.com/) of the logs and paste the link here.
+      label: Redacted sunshine-mic doctor output
+      description: Run sunshine-mic doctor without --show-addresses. Review and remove private addresses, tailnet/account names, home paths, and secrets before posting. If unavailable, include the error instead. Do not attach full logs or configs.
+      render: text
     validations:
-      required: false
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context (optional)
+      description: Mention recent upgrades or whether you manually selected the Tailscale host rather than an automatically discovered LAN entry. Keep addresses and personal data private.

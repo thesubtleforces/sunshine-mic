@@ -1,0 +1,25 @@
+---
+name: Feature request
+description: Suggest an improvement to Sunshine Mic microphone forwarding or protected setup.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sunshine Mic is an independent community preview focused on iPad microphone forwarding to Omarchy/Arch through VoidLink and PipeWire.
+        Qualification and publication are pending. Dictation engines, speech models, and video tuning are outside this preview's scope.
+        Please search existing fork issues first. Suggestions are welcome, but implementation and response times are not guaranteed.
+        This is public: omit private addresses, credentials, recordings, and account details. Report security concerns [privately](https://github.com/thesubtleforces/sunshine-mic/security/advisories/new).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the microphone-forwarding or setup use case and any current workaround.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested improvement
+      description: Explain the desired behavior and any alternatives you considered.
+    validations:
+      required: true

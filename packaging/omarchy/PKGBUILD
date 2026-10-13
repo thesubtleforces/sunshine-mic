@@ -1,38 +1,26 @@
-# Edit on github: https://github.com/LizardByte/Sunshine/blob/master/packaging/linux/Arch/PKGBUILD
 # Reference: https://wiki.archlinux.org/title/PKGBUILD
+# Derived from Omarchy's Sunshine recipe; retain inherited licensing.
+# Community preview: no install/upgrade hook enables microphone forwarding.
 
-## options
-: "${_run_unit_tests:=false}"  # if set to true; unit tests will be executed post build; useful in CI
+: "${_run_unit_tests:=false}"
 : "${_support_headless_testing:=false}"
-: "${_use_cuda:=detect}" # nvenc
-
-# sunshine-mic: Sunshine with client-to-host microphone streaming (PipeWire virtual source).
-# Derived from Omarchy's Sunshine PKGBUILD (omacom/omarchy-pkgs, pkgbuilds/sunshine).
-#
-# Build from the repository this file lives in (the committed `mic` branch):
-#   makepkg -s
-# Pin an exact commit, or build from a hosted fork instead:
-#   _commit=$(git rev-parse HEAD) makepkg -s -f
-#   _repo_url=https://github.com/<you>/Sunshine.git makepkg -s -f
-# The web UI links to _project_url (website) and _project_url/issues (issue tracker); it defaults to
-# _repo_url, so a hosted fork reports to itself and never to the upstream LizardByte tracker.
-: "${_repo_url:=file://$(cd "${startdir}/../.." && pwd)}"
-: "${_project_url:=${_repo_url%.git}}"
-: "${_branch:=mic}"
-: "${_commit:=}"
-
-_basever=2026.914.233613  # upstream Sunshine tag this branch is based on (v${_basever})
+# CI/downstream exports may select a full source commit, never a moving branch.
+_commit=${_commit:-}
+_project_url=https://github.com/thesubtleforces/sunshine-mic
+_repo_url=${_project_url}.git
+_basever=2026.914.233613
+_ffmpeg_version=2026.910.121303
 
 pkgname='sunshine-mic'
-pkgver=${_basever}
-# pkgrel history: 1 first build; 2 validated trial build (commit 2d8eb97a, installed on the trial host);
-# 3 both microphone options default to disabled.
-pkgrel=3
-pkgdesc="Self-hosted game stream host for Moonlight, with client-to-host microphone streaming"
-arch=('x86_64' 'aarch64')
+pkgver=2026.1013.180134
+pkgrel=1
+pkgdesc="Sunshine fork for Omarchy with iPad microphone forwarding via VoidLink and PipeWire (community preview)"
+arch=('x86_64')
 url=${_project_url}
 license=('GPL-3.0-only')
 install=sunshine.install
+# package() strips explicitly before creating the disabled-defaults attestation.
+options=('!strip')
 
 # this variable remains for future cases where we need an older version of gcc for cuda compatibility
 _gcc_version=15
@@ -53,9 +41,11 @@ depends=(
   'hicolor-icon-theme'
   'libayatana-appindicator'
   'libcap'
+  'iproute2'
   'libdrm'
   'libevdev'
   'libpipewire'
+  'libmfx'
   'libpulse'
   'libva'
   'libx11'
@@ -64,23 +54,25 @@ depends=(
   'libxrandr'
   'libxtst'
   'miniupnpc'
+  'nftables'
   'numactl'
   'openssl'
   'opus'
+  'python'
   'qt6-base'
   'qt6-svg'
+  'sudo'
   'udev'
+  'util-linux'
   'vulkan-icd-loader'
   'which'
 )
-
-# Intel Media SDK is unavailable on ARM.
-depends_x86_64=('libmfx')
 
 makedepends=(
   'appstream'
   'appstream-glib'
   'cmake'
+  'cuda'
   'desktop-file-utils'
   "gcc${_gcc_dep_suffix}"
   'git'
@@ -91,9 +83,6 @@ makedepends=(
   'shaderc'
 )
 
-# Use distro Vulkan headers instead of the bundled SDK's recursive sources.
-makedepends_aarch64=('vulkan-headers')
-
 checkdepends=(
   'gcovr'
   'imagemagick'
@@ -101,29 +90,74 @@ checkdepends=(
 
 optdepends=(
   'libva-mesa-driver: AMD GPU encoding support'
+  'tailscale: authenticated tailscale0 and an exact iPad peer are required for protected setup'
 )
 
 provides=("sunshine=${_basever}")
 conflicts=('sunshine')
 
+# Every recursive gitlink has a public, commit-pinned makepkg cache source.
+# Multiple revisions of the same repository need distinct cache names. Update
+# this inventory deliberately when gitlinks change; prepare() rejects omissions.
+_submodules=(
+  'flatpak-builder-tools|de2225a6dee4818c1339b3cdbf29f90c471fcb7e|https://github.com/flatpak/flatpak-builder-tools.git'
+  'build-deps|a1fe2841cbc0d8c4501a1006d2d1cb88f219cc8c|https://github.com/LizardByte/build-deps.git'
+  'amf|eadd00804d5f7e5cd8c85d540073198312870776|https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git'
+  'ffmpeg-source|bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa|https://github.com/FFmpeg/FFmpeg.git'
+  'svt-av1|9292ec8e32bce26f781f277ec8739b53426c4300|https://github.com/LizardByte-infrastructure/SVT-AV1.git'
+  'vulkan-headers|ee2ec5fd83dafce291024683b50dc89219333076|https://github.com/KhronosGroup/Vulkan-Headers.git'
+  'vulkan-loader|b8b96a2862bff1eed468e602d43f706beae89cf1|https://github.com/KhronosGroup/Vulkan-Loader.git'
+  'x264|b35605ace3ddf7c1a5d67a2eb553f034aef41d55|https://github.com/LizardByte-infrastructure/x264.git'
+  'x265|1d117bed4747758b51bd2c124d738527e30392cb|https://github.com/LizardByte-infrastructure/x265_git.git'
+  'doxyconfig-419127b|419127bad87f49b2d45fa957ea7302abbb49c01f|https://github.com/LizardByte/doxyconfig.git'
+  'doxyconfig-e552f7c|e552f7c9f00cd0cf24764a37d0905935b3d2c188|https://github.com/LizardByte/doxyconfig.git'
+  'doxyconfig-b87f7e4|b87f7e4e1dcd8a31c9a550cd7702b7420d89efac|https://github.com/LizardByte/doxyconfig.git'
+  'doxygen-awesome-46483f1|46483f1e5a70ffb9ecd3b82d0a1cd1b24edf13da|https://github.com/jothepro/doxygen-awesome-css.git'
+  'doxygen-awesome-d52eafe|d52eafe3e9303399fda15661f3d7bb8fe3d7eabc|https://github.com/jothepro/doxygen-awesome-css.git'
+  'doxygen-awesome-24c4f96|24c4f966e375ed92e9805e075177d34a9849a43e|https://github.com/ReenigneArcher/doxygen-awesome-css.git'
+  'glad|73db193f853e2ee079bf3ca8a64aa2eaf6459043|https://github.com/Dav1dde/glad.git'
+  'libdisplaydevice|6e9722f89103320c948dc1199066c9e17a69e88a|https://github.com/LizardByte/libdisplaydevice.git'
+  'libvirtualhid|53e1a949fc0784af716b782ddfa6c647cafd1f05|https://github.com/LizardByte/libvirtualhid.git'
+  'lizardbyte-common-06cd442|06cd442b808f02f1674f3192a84d25b9a503c482|https://github.com/LizardByte/lizardbyte-common.git'
+  'lizardbyte-common-f9d91e1|f9d91e1d29b7473f58e43acde4579da4e56c4abe|https://github.com/LizardByte/lizardbyte-common.git'
+  'googletest-52eb810|52eb8108c5bdec04579160ae17225d66034bd723|https://github.com/google/googletest.git'
+  'googletest-f8d7d77|f8d7d77c06936315286eb55f8de22cd23c188571|https://github.com/google/googletest.git'
+  'moonlight-common-c|62e066388f1a1b133e0bee947b9a374311a3354b|https://github.com/moonlight-stream/moonlight-common-c.git'
+  'enet|aca87840b57f045a1f7f9299e4b1b9b8e2a5e2f1|https://github.com/cgutman/enet.git'
+  'nanors|b1e3c22ca0cdc0bb83e3cd6ed1a2fc77869ed99a|https://github.com/sleepybishop/nanors.git'
+  'nvapi|cd6918f60b3c9a0476fdfe7e89bb32330602049d|https://github.com/NVIDIA/nvapi.git'
+  'plasma-wayland-protocols|382dfabda886d3f2f5c067b22e5a22376685ba78|https://github.com/KDE/plasma-wayland-protocols.git'
+  'simple-web-server|546895a93a29062bb178367b46c7afb72da9881e|https://github.com/LizardByte-infrastructure/Simple-Web-Server.git'
+  'tpcircularbuffer|cc520397504bb72bc6df79ff03eb72988a6dc50d|https://github.com/michaeltyson/TPCircularBuffer.git'
+  'tray|c329d9fd0d39dfb47f0f2fb5467e1db2e8a1d623|https://github.com/LizardByte/tray.git'
+  'vigemclient|8d71f6740ffff4671cdadbca255ce528e3cd3fef|https://github.com/LizardByte/Virtual-Gamepad-Emulation-Client.git'
+  'wayland-protocols|ee78491a237eaff9389a0ccf8680521d074407d3|https://github.com/LizardByte-infrastructure/wayland-protocols.git'
+  'wlr-protocols|bf4fc79abc359eea5a0edec0ac6d4a2b2955f82a|https://github.com/LizardByte-infrastructure/wlr-protocols.git'
+)
+
 if [[ -n "${_commit}" ]]; then
+  if [[ ! ${_commit} =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' '_commit must be a full lowercase 40-character source SHA.' >&2
+    return 1
+  fi
   _fragment="#commit=${_commit}"
 else
-  _fragment="#branch=${_branch}"
+  _fragment="#tag=mic-v${pkgver}"
 fi
-source=("$pkgname::git+${_repo_url}${_fragment}")
-sha256sums=('SKIP')
-
-# Options Handling
-if [[ "${_use_cuda::1}" == "d" ]] && pacman -Qi cuda &> /dev/null; then
-  _use_cuda=true
-fi
-
-if [[ "${_use_cuda::1}" == "t" ]]; then
-  optdepends+=(
-    'cuda: Nvidia GPU encoding support'
-  )
-fi
+source=(
+  "$pkgname::git+${_repo_url}${_fragment}"
+  "ffmpeg-${_ffmpeg_version}-x86_64.tar.gz::https://github.com/LizardByte/build-deps/releases/download/v${_ffmpeg_version}/Linux-x86_64-ffmpeg.tar.gz"
+)
+sha256sums=(
+  'SKIP'
+  '496d2bbb674d01e6033e31b9dfc15cbc9dc1494e882a4505f6ab1e03f75b385c'
+)
+for _entry in "${_submodules[@]}"; do
+  IFS='|' read -r _name _sha _url <<< "${_entry}"
+  source+=("${_name}::git+${_url}#commit=${_sha}")
+  sha256sums+=('SKIP')
+done
+unset _entry _name _sha _url
 
 if [[ "${_support_headless_testing::1}" == "t" ]]; then
   optdepends+=(
@@ -144,21 +178,55 @@ if [ -n "${optdepends+x}" ]; then
   unset tmp_array
 fi
 
+_prepare_submodules() {
+    local _repo=$1 _key _path _url _sha _entry _name _cached_sha _cached_url _cache
+    [[ -f ${_repo}/.gitmodules ]] || return 0
+    while IFS= read -r _key; do
+      _path=$(git -C "${_repo}" config -f .gitmodules --get "${_key}") || return 1
+      _url=$(git -C "${_repo}" config -f .gitmodules --get "${_key%.path}.url") || return 1
+      _sha=$(git -C "${_repo}" rev-parse "HEAD:${_path}") || return 1
+      _cache=
+      for _entry in "${_submodules[@]}"; do
+        IFS='|' read -r _name _cached_sha _cached_url <<< "${_entry}"
+        if [[ ${_url} == "${_cached_url}" && ${_sha} == "${_cached_sha}" ]]; then
+          _cache="${srcdir}/${_name}"
+          break
+        fi
+      done
+      if [[ -z ${_cache} ]]; then
+        printf 'Undeclared recursive gitlink: %s %s %s\n' "${_path}" "${_sha}" "${_url}" >&2
+        return 1
+      fi
+      git -C "${_repo}" submodule init -- "${_path}" || return 1
+      git -C "${_repo}" config "${_key%.path}.url" "${_cache}" || return 1
+      # File transport is allowed only here, for already declared makepkg caches.
+      # No remote fallback: all nested gitlinks must be available in those caches.
+      git -C "${_repo}" -c protocol.file.allow=always submodule update \
+        --init --no-fetch --checkout -- "${_path}" || return 1
+      [[ $(git -C "${_repo}/${_path}" rev-parse HEAD) == "${_sha}" ]] || return 1
+      _prepare_submodules "${_repo}/${_path}" || return 1
+    done < <(git -C "${_repo}" config -f .gitmodules --name-only --get-regexp '^submodule\..*\.path$')
+}
+
 prepare() {
-    cd "$pkgname"
-    if [[ $CARCH == aarch64 ]]; then
-      git submodule update --init --depth 1
-      # Fetch Moonlight's nested sources without pulling in the bundled SDK.
-      git -C third-party/moonlight-common-c submodule update --recursive --init --depth 1
-    else
-      git submodule update --recursive --init --depth 1
-    fi
+    _prepare_submodules "${srcdir}/${pkgname}" || return 1
+    local _library
+    for _library in avcodec swscale avutil cbs SvtAv1Enc x264 x265 hdr10plus; do
+      if [[ ! -s ${srcdir}/ffmpeg/lib/lib${_library}.a ]]; then
+        printf 'Pinned FFmpeg asset is missing lib%s.a\n' "${_library}" >&2
+        return 1
+      fi
+    done
+    [[ -s ${srcdir}/ffmpeg/include/libavcodec/avcodec.h ]] || return 1
+    # npm ci in the existing CMake build consumes the committed lockfile unchanged.
 }
 
 build() {
     export BRANCH="mic"
     export BUILD_VERSION="${pkgver}"
     export COMMIT="$(git -C "$pkgname" rev-parse HEAD)"
+    export TAG="mic-v${pkgver}"
+    export CLONE_URL="${_repo_url}"
 
     export CC="gcc${_gcc_env_suffix}"
     export CXX="g++${_gcc_env_suffix}"
@@ -170,56 +238,52 @@ build() {
 
     local _cmake_options=(
       -S "$pkgname"
-      -B build
+      -B cmake-build-release
       -Wno-dev
       -D BUILD_DOCS=OFF
       -D BUILD_WERROR=ON
       -D CMAKE_INSTALL_PREFIX=/usr
       -D SUNSHINE_EXECUTABLE_PATH=/usr/bin/sunshine
       -D SUNSHINE_ASSETS_DIR="share/sunshine"
-      -D SUNSHINE_PUBLISHER_NAME='sunshine-mic'
+      -D SUNSHINE_PUBLISHER_NAME='Sunshine Mic'
       -D SUNSHINE_PUBLISHER_WEBSITE="${_project_url}"
       -D SUNSHINE_PUBLISHER_ISSUE_URL="${_project_url}/issues"
+      -D FFMPEG_PREPARED_BINARIES="${srcdir}/ffmpeg"
+      -D SUNSHINE_ENABLE_CUDA=ON
+      -D CUDA_FAIL_ON_MISSING=ON
+      -D GLAD_SKIP_PIP_INSTALL=ON
+      -D Python_EXECUTABLE=/usr/bin/python
     )
 
-    if [[ $CARCH == aarch64 ]]; then
-      _cmake_options+=(-D SUNSHINE_SYSTEM_VULKAN_HEADERS=ON)
-    fi
-
-    if [[ "${_use_cuda::1}" != "t" ]]; then
-      _cmake_options+=(-DSUNSHINE_ENABLE_CUDA=OFF -DCUDA_FAIL_ON_MISSING=OFF)
+    # CUDA is an explicit build dependency, not an optional host-detected feature.
+    # Preserve Arch's versioned host-compiler compatibility when cuda requires it.
+    local _cuda_gcc_version
+    _cuda_gcc_version="$(LC_ALL=C pacman -Qi cuda | grep -Pom1 '^Depends On\s*:.*\bgcc\K[0-9]+\b' || true)"
+    export CUDA_PATH=/opt/cuda
+    if [[ -n ${_cuda_gcc_version} ]]; then
+      export NVCC_CCBIN="/usr/bin/g++-${_cuda_gcc_version}"
     else
-      # If cuda has just been installed, its variables will not be available in the environment
-      # therefore, set them manually to the expected values on Arch Linux
-      if [ -z "${CUDA_PATH:-}" ] && pacman -Qi cuda &> /dev/null; then
-        local _cuda_gcc_version
-        _cuda_gcc_version="$(LC_ALL=C pacman -Si cuda | grep -Pom1 '^Depends On\s*:.*\bgcc\K[0-9]+\b' || true)"
-
-        export CUDA_PATH=/opt/cuda
-        if [ -n "$_cuda_gcc_version" ]; then
-          export NVCC_CCBIN="/usr/bin/g++-${_cuda_gcc_version}"
-        else
-          export NVCC_CCBIN="/usr/bin/g++"
-        fi
-      fi
+      export NVCC_CCBIN="/usr/bin/g++${_gcc_env_suffix}"
     fi
+    [[ -x ${CUDA_PATH}/bin/nvcc && -x ${NVCC_CCBIN} ]] || return 1
 
     if [[ "${_run_unit_tests::1}" != "t" ]]; then
       _cmake_options+=(-DBUILD_TESTS=OFF)
     fi
 
-    if [[ -z "${GITHUB_ACTIONS}" ]]; then
-	    _appstreamcli_arguments=(--no-net)
+    local -a _appstreamcli_arguments=()
+    if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
+      _appstreamcli_arguments=(--no-net)
     fi
 
     cmake "${_cmake_options[@]}"
 
-    appstreamcli validate "${_appstreamcli_arguments[@]}" "build/dev.lizardbyte.app.Sunshine.metainfo.xml"
-    appstream-util validate "build/dev.lizardbyte.app.Sunshine.metainfo.xml"
-    desktop-file-validate "build/dev.lizardbyte.app.Sunshine.desktop"
-    desktop-file-validate "build/dev.lizardbyte.app.Sunshine.terminal.desktop"
+    appstreamcli validate "${_appstreamcli_arguments[@]}" "cmake-build-release/dev.lizardbyte.app.Sunshine.metainfo.xml"
+    appstream-util validate "cmake-build-release/dev.lizardbyte.app.Sunshine.metainfo.xml"
+    desktop-file-validate "cmake-build-release/dev.lizardbyte.app.Sunshine.desktop"
+    desktop-file-validate "cmake-build-release/dev.lizardbyte.app.Sunshine.terminal.desktop"
 
-    cmake --build build
+    cmake --build cmake-build-release
 }
 
 check() {
@@ -227,15 +291,14 @@ check() {
       export CC="gcc${_gcc_env_suffix}"
       export CXX="g++${_gcc_env_suffix}"
 
-      cd "${srcdir}/build/tests"
+      cd "${srcdir}/cmake-build-release/tests"
       # Do not silently upload misleading coverage if the gcov runtime cannot
       # write profile data, such as when its version differs from the compiler.
       GCOV_EXIT_AT_ERROR=1 ./test_sunshine --gtest_color=yes --gtest_output=xml:test_results.xml
 
       # Generate coverage report
       # Run gcovr from the build directory (where all .gcda/.gcno files are)
-      # This matches the pattern used in ci-linux.yml
-      cd "${srcdir}/build"
+      cd "${srcdir}/cmake-build-release"
 
       # Dynamically find the gcov executable from the selected compiler.
       # This ensures we use the same gcov version that produced the .gcno files.
@@ -264,7 +327,7 @@ check() {
       echo "Using gcov at: $gcov_path"
 
       # Use the actual relative path to the source directory
-      # From ${srcdir}/build, the source is at ../${pkgname}/src
+      # From ${srcdir}/cmake-build-release, source is at ../${pkgname}/src.
       gcovr --gcov-executable "$gcov_path" . -r "../${pkgname}/src" \
         --exclude-noncode-lines \
         --exclude-throw-branches \
@@ -277,11 +340,52 @@ check() {
       sed -i "s|${srcdir}/${pkgname}/src|src|g" coverage.xml
     fi
 
-    cd "${srcdir}/build"
+    cd "${srcdir}/cmake-build-release"
     ./sunshine --version
 }
 
 package() {
     export MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}"
-    DESTDIR="$pkgdir" cmake --install build
+    DESTDIR="$pkgdir" cmake --install cmake-build-release
+
+    local _guard="${srcdir}/${pkgname}/packaging/omarchy/mic-guard"
+    install -Dm755 "${_guard}/sunshine-mic" "${pkgdir}/usr/bin/sunshine-mic"
+    install -Dm755 "${_guard}/guard" "${pkgdir}/usr/lib/sunshine-mic/guard"
+    install -Dm644 "${_guard}/guardlib.py" "${pkgdir}/usr/lib/sunshine-mic/guardlib.py"
+    install -Dm644 "${_guard}/sunshine-mic-guard.service" \
+      "${pkgdir}/usr/lib/systemd/system/sunshine-mic-guard.service"
+
+    # Hash final installed bytes. makepkg must not strip them again afterward.
+    strip --strip-unneeded "${pkgdir}/usr/bin/sunshine"
+    local _binary_sha
+    _binary_sha=$(sha256sum "${pkgdir}/usr/bin/sunshine") || return 1
+    _binary_sha=${_binary_sha%% *}
+    install -dm755 "${pkgdir}/usr/share/sunshine-mic"
+    printf '{"schema":1,"sha256":"%s","stream_mic":false,"mic_default_source":false}\n' \
+      "${_binary_sha}" > "${pkgdir}/usr/share/sunshine-mic/disabled-defaults.json"
+    chmod 644 "${pkgdir}/usr/share/sunshine-mic/disabled-defaults.json"
+
+    local _licenses="${pkgdir}/usr/share/licenses/${pkgname}" _notice
+    install -Dm644 "${srcdir}/${pkgname}/LICENSE" "${_licenses}/LICENSE"
+    install -Dm644 "${srcdir}/${pkgname}/NOTICE" "${_licenses}/NOTICE"
+    # Preserve notices with their source-relative paths; do not relicense them.
+    cd "${srcdir}/${pkgname}"
+    while IFS= read -r -d '' _notice; do
+      install -Dm644 "${_notice}" "${_licenses}/${_notice}"
+    done < <(find third-party -type f \( -iname 'license*' -o -iname 'licence*' \
+      -o -iname 'copying*' -o -iname 'copyright*' -o -iname 'notice*' \) -print0)
+    # Include notices for the web bundle and CMake's exact-version source downloads.
+    while IFS= read -r -d '' _notice; do
+      install -Dm644 "${_notice}" "${_licenses}/${_notice}"
+    done < <(find node_modules -type f \( -iname 'license*' -o -iname 'licence*' \
+      -o -iname 'copying*' -o -iname 'copyright*' -o -iname 'notice*' \) -print0)
+    cd "${srcdir}/cmake-build-release"
+    local _dependency
+    for _dependency in _deps/*-src; do
+      [[ -d ${_dependency} ]] || continue
+      while IFS= read -r -d '' _notice; do
+        install -Dm644 "${_notice}" "${_licenses}/cmake-dependencies/${_notice#_deps/}"
+      done < <(find "${_dependency}" -type f \( -iname 'license*' -o -iname 'licence*' \
+        -o -iname 'copying*' -o -iname 'copyright*' -o -iname 'notice*' \) -print0)
+    done
 }

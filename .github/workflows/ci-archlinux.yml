@@ -1,197 +1,319 @@
 ---
-name: CI-Archlinux
+name: Arch candidate
 permissions: {}
 
 on:
   workflow_call:
     inputs:
-      release_commit:
-        required: true
-        type: string
-      release_version:
+      source_commit:
+        description: Exact full source SHA from the calling CI workflow
         required: true
         type: string
 
 jobs:
   build_archlinux:
-    name: Archlinux
-    env:
-      _use_cuda: true
-      _run_unit_tests: true
-      _support_headless_testing: true
-      BRANCH: ${{ github.head_ref || github.ref_name }}
-      BUILD_VERSION: ${{ inputs.release_version }}
-      CLONE_URL: >-
-        ${{
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.clone_url ||
-          github.event.repository.clone_url
-        }}
-      COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.release_commit }}
+    name: Arch candidate
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     container:
       image: archlinux/archlinux:base-devel
-      options: --cpus 4 --memory 8g
+      # Disposable hosted runner only. Nested user/mount/net/PID namespaces and
+      # real nft packet tests need these capabilities; never use a production host.
+      options: --privileged --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+    env:
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      EXPECTED_COMMIT: ${{ github.sha }}
+      CI_RUN: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    defaults:
+      run:
+        shell: bash
     steps:
-
-      - name: Update keyring
-        shell: bash
+      - name: Require exact calling source
         run: |
-          # Update keyring to avoid signature errors, and update system
-          pacman -Syy --disable-download-timeout --needed --noconfirm \
-            archlinux-keyring
-          pacman -Syu --disable-download-timeout --noconfirm
-          pacman -Scc --noconfirm
+          set -euo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_COMMIT" == "$EXPECTED_COMMIT" ]]
 
-      - name: Setup builder user
-        shell: bash
+      - name: Provision disposable Arch and subordinate identities
         run: |
-          # arch prevents running makepkg as root
-          useradd -m builder
-          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          set -euo pipefail
+          pacman -Sy --needed --noconfirm archlinux-keyring
+          pacman -Syu --needed --noconfirm base-devel git sudo python namcap \
+            xorg-server-xvfb xorg-xauth pipewire pipewire-audio opus openssl \
+            iproute2 nftables util-linux shadow libarchive zstd
+          useradd --create-home -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 builder
+          usermod --add-subuids 100000-165535 --add-subgids 100000-165535 builder
+          test -x /usr/bin/newuidmap
+          test -x /usr/bin/newgidmap
+          # makepkg --syncdeps alone uses this delegation; never install Sunshine.
+          printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman\n' > /etc/sudoers.d/ci-builder
+          chmod 0440 /etc/sudoers.d/ci-builder
+          visudo -cf /etc/sudoers.d/ci-builder
 
-      - name: Patch build flags
-        shell: bash
+      - name: Checkout exact source without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+          submodules: false
+          fetch-depth: 1
+
+      - name: Prepare fresh public-source build
         run: |
-          # shellcheck disable=SC2016
-          sed -i 's,#MAKEFLAGS="-j2",MAKEFLAGS="-j$(nproc)",g' /etc/makepkg.conf
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]]
+          mkdir -p ci-work/pkg ci-work/logs ci-work/runtime-archives ci-work/extracted
+          cp packaging/omarchy/PKGBUILD packaging/omarchy/sunshine.install ci-work/pkg/
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          # No restored caches or sibling source checkout. All sources are fetched
+          # anonymously by makepkg from the recipe's public, pinned inputs.
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+            GIT_ASKPASS=/bin/false GIT_ALLOW_PROTOCOL=https \
+            bash -euo pipefail -c '
+              cd ci-work/pkg
+              makepkg --printsrcinfo > ../logs/public-default.SRCINFO
+              namcap PKGBUILD 2>&1 | tee ../logs/namcap-recipe.log
+              python -c '\''import pathlib; p=pathlib.Path("../logs/namcap-recipe.log"); assert not any(" E: " in s for s in p.read_text().splitlines()), "namcap recipe errors"'\''
+            '
 
-      - name: Install dependencies
-        shell: bash
+      - name: Require real guard namespace and packet isolation
         run: |
-          pacman -Syu --disable-download-timeout --needed --noconfirm \
-            base-devel \
-            cmake \
-            cuda \
-            git \
-            namcap \
-            xorg-server-xvfb
-          pacman -Scc --noconfirm
+          set -euo pipefail
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            python -I tests/e2e/mic_guard_e2e.py 2>&1 | tee ci-work/logs/guard-source.log
 
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Fix workspace permissions
-        shell: bash
+      - name: Exercise source and artifact rejection contracts
         run: |
-          # Give builder user ownership of the workspace
-          chown -R builder:builder "${GITHUB_WORKSPACE}"
+          set -euo pipefail
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            python -m unittest discover -s tests/e2e -p test_release_artifacts.py -v \
+            2>&1 | tee ci-work/logs/artifact-contracts.log
 
-      - name: Configure PKGBUILD
-        shell: bash
-        run: |
-          # Calculate sub_version
-          sub_version=""
-          if [[ "${BRANCH}" != "master" ]]; then
-            sub_version=".r${COMMIT}"
-          fi
-
-          # Configure PKGBUILD file (as root)
-          mkdir -p build
-          cd build
-          cmake \
-            -DSUNSHINE_CONFIGURE_ONLY=ON \
-            -DSUNSHINE_CONFIGURE_PKGBUILD=ON \
-            -DSUNSHINE_SUB_VERSION="${sub_version}" \
-            ..
-
-          # Make sure builder can read from build directory
-          chmod -R a+rX "${GITHUB_WORKSPACE}/build"
-
-      - name: Prepare PKGBUILD Package
-        shell: bash
-        run: |
-          # Create pkg directory and move files (as root)
-          mkdir -p pkg
-          mv build/PKGBUILD pkg/
-          mv build/sunshine.install pkg/
-
-          # Change ownership to builder
-          chown -R builder:builder pkg
-
-          # Run makepkg as builder user
-          cd pkg
-          sudo -u builder makepkg --printsrcinfo | tee .SRCINFO
-
-          # create a PKGBUILD archive
-          cd ..
-          tar -czf sunshine.pkg.tar.gz -C pkg .
-
-      - name: Build PKGBUILD
-        env:
-          DISPLAY: :1
+      - name: Build exact recipe with validators GoogleTest and coverage
         id: build
-        shell: bash
-        working-directory: pkg
         run: |
-          # Add problem matcher
-          echo "::add-matcher::.github/matchers/gcc.json"
+          set -euo pipefail
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin:/opt/cuda/bin \
+            LANG=C.UTF-8 GITHUB_ACTIONS=true SOURCE_COMMIT="$SOURCE_COMMIT" \
+            GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+            GIT_ASKPASS=/bin/false MAKEFLAGS=-j2 CMAKE_BUILD_PARALLEL_LEVEL=2 \
+            bash -euo pipefail -c '
+              cd ci-work/pkg
+              # xvfb-run waits for readiness and tears down its own X server.
+              _commit="$SOURCE_COMMIT" _run_unit_tests=true _support_headless_testing=true \
+                xvfb-run -a -s "-screen 0 1280x720x24 -nolisten tcp" \
+                makepkg --syncdeps --noconfirm --log
+            ' 2>&1 | tee ci-work/logs/build.log
+          # The recipe runs the real validators, full GoogleTest and gcovr.
+          # Nonempty XML is required, not just a successful shell exit.
+          python - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as ET
+          root = pathlib.Path('ci-work/pkg/src/cmake-build-release')
+          tests = ET.parse(root / 'tests/test_results.xml').getroot()
+          assert int(tests.get('tests', '0')) > 0, 'no GoogleTest cases'
+          assert int(tests.get('failures', '0')) == int(tests.get('errors', '0')) == 0
+          coverage = ET.parse(root / 'coverage.xml').getroot()
+          assert coverage.tag == 'coverage' and int(coverage.get('lines-valid', '0')) > 0
+          PY
 
-          source /etc/profile  # ensure cuda is in the PATH
+      - name: Extract one package and record exact installed bytes
+        run: |
+          set -euo pipefail
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            SOURCE_COMMIT="$SOURCE_COMMIT" bash -euo pipefail <<'BUILDER' 2>&1 | tee ci-work/logs/package.log
+          shopt -s nullglob
+          packages=(ci-work/pkg/*.pkg.tar.*)
+          [[ ${#packages[@]} == 1 ]]
+          package=${packages[0]}
+          [[ "${package##*/}" == sunshine-mic-*.pkg.tar.zst ]]
+          namcap "$package" 2>&1 | tee ci-work/logs/namcap-package.log
+          python -c 'import pathlib; assert not any(" E: " in s for s in pathlib.Path("ci-work/logs/namcap-package.log").read_text().splitlines()), "namcap package errors"'
+          bsdtar --no-same-owner -xf "$package" -C ci-work/extracted
+          ci-work/extracted/usr/bin/sunshine --version | tee ci-work/logs/package-version.log
+          python - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess
+          work = pathlib.Path('ci-work')
+          package = next((work / 'pkg').glob('*.pkg.tar.zst'))
+          sourceinfo = (work / 'logs/public-default.SRCINFO').read_text()
+          def scalar(name, pattern):
+              values = re.findall(r'^\s*' + name + r' = (' + pattern + r')$', sourceinfo, re.MULTILINE)
+              assert len(values) == 1, 'ambiguous public recipe metadata: ' + name
+              return values[0]
+          preview_version = scalar('pkgver', r'[0-9]{4}\.[0-9]{3,4}\.[0-9]{6}')
+          pkgrel = scalar('pkgrel', r'[1-9][0-9]*')
+          ffmpeg = re.findall(r'^\s*source = (ffmpeg-[0-9.]+-x86_64\.tar\.gz)::https://', sourceinfo, re.MULTILINE)
+          assert len(ffmpeg) == 1, 'ambiguous prepared FFmpeg asset'
+          assert package.name == f'sunshine-mic-{preview_version}-{pkgrel}-x86_64.pkg.tar.zst'
+          binary = work / 'extracted/usr/bin/sunshine'
+          sha = lambda p: hashlib.file_digest(p.open('rb'), 'sha256').hexdigest()
+          package_sha, executable_sha = sha(package), sha(binary)
+          attestation = json.loads((work / 'extracted/usr/share/sunshine-mic/disabled-defaults.json').read_text())
+          assert attestation == {'schema': 1, 'sha256': executable_sha, 'stream_mic': False, 'mic_default_source': False}
+          version = (work / 'logs/package-version.log').read_text()
+          assert preview_version in version and os.environ['SOURCE_COMMIT'] in version
+          metadata = subprocess.check_output(['bsdtar', '-xOf', str(package), '.PKGINFO'], text=True)
+          for line in ('pkgname = sunshine-mic', f'pkgver = {preview_version}-{pkgrel}', 'arch = x86_64'):
+              assert line in metadata.splitlines(), line
+          evidence = {'source_commit': os.environ['SOURCE_COMMIT'], 'package': package.name,
+                      'package_sha256': package_sha, 'executable_sha256': executable_sha,
+                      'version': preview_version, 'pkgrel': int(pkgrel), 'ffmpeg_archive': ffmpeg[0],
+                      'version_output': version, 'reset_attestation': attestation,
+                      'qualification': 'NOT ASSERTED: VM lifecycle/reboot and real iPad remain external gates'}
+          (work / 'logs/candidate-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
+          print(json.dumps(evidence, indent=2))
+          PY
+          test -f ci-work/extracted/usr/lib/udev/rules.d/60-sunshine.rules
+          udevadm verify ci-work/extracted/usr/lib/udev/rules.d/60-sunshine.rules
+          BUILDER
 
-          # Run Xvfb for headless testing
-          Xvfb "${DISPLAY}" -screen 0 1024x768x24 &
+      - name: Exercise every receiver scenario on extracted package
+        run: |
+          set -euo pipefail
+          # A separate PID/mount/network boundary also hides all privileged Docker
+          # devices before dropping to builder. The harness adds its own private
+          # user/network/mount namespace and private PipeWire. Any mount failure is fatal.
+          unshare --mount --net --pid --fork --mount-proc bash -euo pipefail <<'ISOLATED' 2>&1 | tee ci-work/logs/receiver.log
+          mount --make-rprivate /
+          mount -t tmpfs -o mode=0755,nosuid tmpfs /dev
+          mknod -m 666 /dev/null c 1 3
+          mknod -m 666 /dev/zero c 1 5
+          mknod -m 666 /dev/random c 1 8
+          mknod -m 666 /dev/urandom c 1 9
+          mkdir /dev/shm
+          chmod 1777 /dev/shm
+          ln -s /proc/self/fd /dev/fd
+          ln -s /proc/self/fd/0 /dev/stdin
+          ln -s /proc/self/fd/1 /dev/stdout
+          ln -s /proc/self/fd/2 /dev/stderr
+          mount -t tmpfs -o mode=0755,nosuid,nodev,noexec tmpfs /sys
+          ip link set lo up
+          exec runuser -u builder -- env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            python -I tests/e2e/mic_e2e.py --sunshine "$PWD/ci-work/extracted/usr/bin/sunshine" --verbose
+          ISOLATED
 
-          # Check PKGBUILD
-          sudo -u builder namcap -i PKGBUILD
+      - name: Exercise packaged guard implementation
+        run: |
+          set -euo pipefail
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            python -I tests/e2e/mic_guard_e2e.py \
+            --library "$PWD/ci-work/extracted/usr/lib/sunshine-mic/guardlib.py" \
+            2>&1 | tee ci-work/logs/guard-package.log
 
-          # Export PKGBUILD options so they're available to makepkg
-          export _use_cuda="${_use_cuda}"
-          export _run_unit_tests="${_run_unit_tests}"
-          export _support_headless_testing="${_support_headless_testing}"
+      - name: Record candidate compiler and runtime archive evidence
+        run: |
+          set -euo pipefail
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin:/opt/cuda/bin LANG=C.UTF-8 \
+            python - <<'PY' 2>&1 | tee ci-work/logs/toolchain.log
+          import hashlib, json, pathlib, shutil, subprocess
+          work = pathlib.Path('ci-work')
+          build = work / 'pkg/src/cmake-build-release'
+          cache = {}
+          for line in (build / 'CMakeCache.txt').read_text().splitlines():
+              if line and not line.startswith(('#', '//')) and '=' in line and ':' in line.split('=', 1)[0]:
+                  name, value = line.split('=', 1)
+                  cache[name.split(':', 1)[0]] = value
+          assert pathlib.Path(cache['CMAKE_HOME_DIRECTORY']).resolve() == (work / 'pkg/src/sunshine-mic').resolve()
+          compiler = cache['CMAKE_CXX_COMPILER']
+          version = lambda command: subprocess.check_output([command, '--version'], text=True).splitlines()[0]
+          toolchains = {'c++': version(compiler), 'cmake': version('cmake'), 'makepkg': version('makepkg')}
+          (work / 'logs/toolchains.json').write_text(json.dumps(toolchains, indent=2) + '\n')
+          archives = {}
+          for name in ('libgcc.a', 'libgcc_eh.a', 'libstdc++.a'):
+              path = pathlib.Path(subprocess.check_output([compiler, '-print-file-name=' + name], text=True).strip())
+              assert path.is_absolute() and path.is_file(), 'missing compiler runtime: ' + name
+              target = work / 'runtime-archives' / name
+              shutil.copyfile(path, target)
+              archives[name] = {'compiler_path': str(path), 'sha256': hashlib.file_digest(target.open('rb'), 'sha256').hexdigest()}
+          evidence = {'compiler': compiler, 'toolchains': toolchains, 'runtime_archives': archives}
+          (work / 'logs/compiler-runtime-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
+          print(json.dumps(evidence, indent=2))
+          print(subprocess.check_output(['pacman', '-Q'], text=True))
+          PY
 
-          # Build the package as builder user (pass through environment variables)
-          sudo -u builder env \
-            _use_cuda="${_use_cuda}" \
-            _run_unit_tests="${_run_unit_tests}" \
-            _support_headless_testing="${_support_headless_testing}" \
-            makepkg -si --noconfirm
+      - name: Assemble complete corresponding source and provenance without credentials
+        id: assemble
+        run: |
+          set -euo pipefail
+          # This is a hard gate, not --check-inputs. In particular -static-libgcc
+          # needs the exact candidate GCC source/notices and inventory binding to
+          # the runtime archive hashes above. Missing records BLOCK candidate upload.
+          sudo -u builder env -i HOME=/home/builder PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            SOURCE_COMMIT="$SOURCE_COMMIT" CI_RUN="$CI_RUN" \
+            python - <<'PY' 2>&1 | tee ci-work/logs/source-assembly.log
+          import json, os, pathlib, subprocess
+          work = pathlib.Path('ci-work').resolve()
+          source = work / 'pkg/src/sunshine-mic'
+          build = work / 'pkg/src/cmake-build-release'
+          evidence = json.loads((work / 'logs/candidate-evidence.json').read_text())
+          version = evidence['version']
+          command = ['python', '-I', str(source / 'packaging/omarchy/release-artifacts.py'),
+                     '--package', str(work / 'pkg' / evidence['package']),
+                     '--checkout', str(source),
+                     '--dependency-inventory', str(source / 'packaging/omarchy/dependency-sources.json'),
+                     '--ffmpeg-asset', str(work / 'pkg' / evidence['ffmpeg_archive']),
+                     '--link-command', str(build / 'CMakeFiles/sunshine.dir/link.txt'),
+                     '--build-dir', str(build), '--runtime-archive-dir', str(work / 'runtime-archives'),
+                     '--commit', os.environ['SOURCE_COMMIT'], '--version', version,
+                     '--tag', 'mic-v' + version, '--ci-run', os.environ['CI_RUN'],
+                     '--output', str(work / 'candidate')]
+          for name, value in json.loads((work / 'logs/toolchains.json').read_text()).items():
+              command.extend(['--toolchain', name + '=' + value])
+          subprocess.run(command, check=True)
+          expected = {evidence['package'],
+                      f'sunshine-mic-{version}-corresponding-source.tar.zst',
+                      f'sunshine-mic-{version}-downstream-source.tar.gz', 'provenance.json', 'SHA256SUMS'}
+          assert {p.name for p in (work / 'candidate').iterdir()} == expected
+          assert all(p.is_file() and not p.is_symlink() for p in (work / 'candidate').iterdir())
+          PY
 
-          # Native packages must install the host rule used by dynamically
-          # created libvirtualhid hidraw and input event nodes.
-          test -f /usr/lib/udev/rules.d/60-sunshine.rules
-          grep -Fq 'IMPORT{parent}="HID_*"' \
-            /usr/lib/udev/rules.d/60-sunshine.rules
-          grep -Fq 'ENV{HID_PHYS}=="libvirtualhid/uhid/*"' \
-            /usr/lib/udev/rules.d/60-sunshine.rules
-          udevadm verify /usr/lib/udev/rules.d/60-sunshine.rules
-
-          # Remove debug package
-          rm -f sunshine-debug*.pkg.tar.zst
-
-          # Remove problem matcher
-          echo "::remove-matcher owner=gcc::"
-
-      - name: Upload coverage artifact
-        if: >-
-          always() &&
-          (steps.build.outcome == 'success' || steps.build.outcome == 'failure')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - name: Upload complete candidate only after every gate succeeds
+        if: success() && steps.assemble.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-Archlinux
+          name: sunshine-mic-candidate-${{ inputs.source_commit }}
+          path: ci-work/candidate/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          overwrite: false
+
+      - name: Preserve allowlisted receiver failure diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, shutil
+          source = pathlib.Path('/home/builder/.cache/sunshine-mic/e2e-logs')
+          destination = pathlib.Path('ci-work/logs/receiver')
+          if source.is_dir():
+              for path in source.rglob('*'):
+                  if path.name not in {'harness.log', 'pipewire.log', 'sunshine.log', 'sunshine.stdout'}:
+                      continue
+                  if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(source.resolve()):
+                      continue
+                  target = destination / path.relative_to(source)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(path, target)
+          PY
+
+      - name: Upload diagnostic logs and real test XML even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sunshine-mic-diagnostics-${{ inputs.source_commit }}-${{ github.run_attempt }}
+          # Deliberate allowlist: no package, private test credentials, audio,
+          # full homes, recursive source/cache dumps or runtime archives.
           path: |
-            pkg/src/build/coverage.xml
-            pkg/src/build/tests/test_results.xml
-          if-no-files-found: error
-
-      - name: Copy Artifacts
-        shell: bash
-        run: |
-          # create artifacts directory
-          mkdir -p artifacts
-
-          # Copy built packages to artifacts
-          cp pkg/sunshine*.pkg.tar.zst artifacts/
-          cp sunshine.pkg.tar.gz artifacts/
-
-          # List artifacts
-          ls -la artifacts/
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: build-Archlinux
-          path: artifacts/
-          if-no-files-found: error
+            ci-work/logs/**/*.log
+            ci-work/logs/receiver/**/sunshine.stdout
+            ci-work/logs/*.json
+            ci-work/logs/public-default.SRCINFO
+            ci-work/pkg/src/cmake-build-release/coverage.xml
+            ci-work/pkg/src/cmake-build-release/tests/test_results.xml
+          if-no-files-found: warn
+          retention-days: 14
+          overwrite: false

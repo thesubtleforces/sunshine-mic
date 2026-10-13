@@ -1,4 +1,7 @@
 # shellcheck shell=bash
+# Canonical package hook, also used verbatim by downstream recipe exports.
+# These inherited capability/device hooks do not activate microphone forwarding.
+# Never create profiles, write user homes, restart services or enable a guard here.
 
 do_setcap() {
   setcap cap_sys_admin,cap_sys_nice+p "$(readlink -f usr/bin/sunshine)"
@@ -24,4 +27,12 @@ post_upgrade() {
   do_setcap
   do_udev_reload
   modprobe uhid
+}
+
+pre_remove() {
+  printf '%s\n' \
+    'Sunshine Mic: run sunshine-mic reset as the configured desktop user BEFORE removal/stock rollback.' \
+    'Removal does not remove managed firewall protection, root profile/delegation or user activation.' \
+    'Retained activation will fail closed while the Sunshine Mic helper is absent; do not bypass it.' \
+    'Package removal does not stop an existing Sunshine session or tear down its microphone socket.'
 }

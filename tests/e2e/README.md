@@ -10,6 +10,27 @@ Assertions are made on observable state: PipeWire nodes and `default` metadata, 
 offers no other observable (the "ambiguous" line, a sync point for the ENet attach, a crash/`Fatal` audit);
 they are named constants at the top of `mic_e2e.py`.
 
+## Protected setup contracts
+
+Run `python3 tests/e2e/mic_guard_e2e.py` as an unprivileged user. It requires `unshare`, `mount`,
+`ip`, `nft`, `visudo`, Python, and configured subordinate UID/GID mappings (`newuidmap`/`newgidmap`).
+Missing isolation is an error, never a skip. The root helper is never run against the host filesystem.
+
+The harness creates private user/network/mount/PID namespaces, remounts the root read-only, and hides
+`/etc`, `/run`, `/var`, `/home`, `/root`, `/tmp`, `/dev`, `/sys` and `/usr/local` behind private tmpfs mounts.
+It exercises profile trust/type boundaries, ambiguous reset refusal, actual lock exclusion/exec release,
+helper privilege/argument refusal, and real IPv4/IPv6 packet delivery across separate Tailscale/LAN
+interfaces. It checks kernel-rule drift rather than comparing generated text. Unrelated tables/ports,
+failed atomic reload protection and disabled policy are covered.
+An injected service-activation failure exercises real durable profile/intent files, sudoers validation and
+nft denial: incomplete activation blocks apply/conflicting recovery; identical retry restores the selected
+peer policy, then disable denies delivery. Service calls, stopped-unit checks and peer discovery are
+injected for this test; it does not prove actual systemd/Tailscale behavior.
+
+This is **not** systemd/pacman/reboot qualification. Real activation recovery, effective manager environment,
+full setup/reconfigure/disable/reset races, package upgrade/rollback and the real iPad session remain
+required disposable-VM release gates. See the [installation guide](../../packaging/omarchy/README.md).
+
 ## Requirements
 
 * Linux with unprivileged user namespaces (`unshare -rnm` must work) and Python 3.9+ (stdlib only).

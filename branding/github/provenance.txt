@@ -1,0 +1,41 @@
+Sunshine Mic community-preview artwork
+Created: 2026-10-13
+
+Files
+  sunshine-mic-banner.svg: editable original vector source, 1280 x 640.
+  sunshine-mic-social-preview.png: losslessly compressed 1280 x 640 export.
+
+Origin and scope
+  Original hand-specified SVG geometry and separately typeset text, authored
+  for this fork with coding-assistant assistance. The sun/microphone motif
+  does not reuse Sunshine or Omarchy logo artwork. No stock artwork, private
+  material, product screenshots, generated lettering, or UI mockups are used.
+  Decorative branding is not a demonstration or compatibility evidence.
+  The preview label and independence/affiliation text are intentional.
+
+  No configured fal integration was discoverable in the available tools:
+  no fal executable, fal_client Python package, or FAL_* environment variable
+  names were present. No credential values or secret files were read.
+  The approved original-SVG fallback was used; no generative-image API was
+  called, so no image-model usage terms or third-party image licenses apply.
+
+Usage
+  Original artwork is provided under GNU GPL version 3; see ../../LICENSE.
+  Product names identify compatibility and origin, not endorsement.
+  Text uses DejaVu Sans with a generic sans-serif fallback. No font file is
+  embedded or distributed; the PNG was rendered with installed DejaVu Sans.
+  The SVG retains live text plus an accessible title and description.
+
+Export (run from repository root; requires librsvg and ImageMagick)
+  rsvg-convert --width 1280 --height 640 --output branding/github/sunshine-mic-social-preview.png branding/github/sunshine-mic-banner.svg
+  magick branding/github/sunshine-mic-social-preview.png -strip -define png:compression-level=9 -define png:exclude-chunks=date,time branding/github/sunshine-mic-social-preview.png
+
+Parent review commands (not yet exercised; temporary files outside repository)
+  rsvg-convert --width 640 --height 320 --output /tmp/sunshine-mic-banner-640.png branding/github/sunshine-mic-banner.svg
+  rsvg-convert --width 320 --height 160 --output /tmp/sunshine-mic-mobile-320.png branding/github/sunshine-mic-banner.svg
+  magick identify branding/github/sunshine-mic-social-preview.png
+  Open the full-size PNG and both reduced previews to review text, contrast,
+  geometry, and cropping. The tiny independence footer is supplemental; put
+  preview status, compatibility, and non-endorsement in nearby README text
+  as well. Review the actual GitHub mobile README and social-card rendering
+  before publication. Export completion is not a claim of visual review.

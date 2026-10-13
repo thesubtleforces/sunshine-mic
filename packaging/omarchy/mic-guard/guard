@@ -1,0 +1,487 @@
+#!/usr/bin/python3 -I
+"""Fixed-target privileged Sunshine Mic firewall transactions; never touches homes."""
+import glob
+import hashlib
+import json
+import os
+import pwd
+import re
+import sys
+import tempfile
+
+# Isolated Python ignores caller-controlled import and environment configuration.
+sys.dont_write_bytecode = True
+sys.path.insert(0, '/usr/lib/sunshine-mic')
+from guardlib import (DROPIN, GUARD_UNIT, HELPER, MARKER, PENDING,
+                      PROFILE, SUDOERS, TABLE, UNIT, GuardError, apply_profile, decode_json,
+                      deny_rules, kernel_table, read_pending, read_profile, render_rules,
+                      run, trusted_fd, trusted_lock, trusted_parents, trusted_text,
+                      validate_peer, validate_profile, validate_reset_config,
+                      verify_disabled_binary, verify_kernel)
+
+
+def authenticated_uid():
+    uid = os.environ.get('SUDO_UID', '')
+    if not re.fullmatch('[1-9][0-9]*', uid):
+        raise GuardError('configuration requires authenticated desktop-user sudo')
+    try:
+        account = pwd.getpwuid(int(uid))
+    except (KeyError, OverflowError) as exc:
+        raise GuardError('invalid sudo account') from exc
+    if os.environ.get('SUDO_USER') != account.pw_name:
+        raise GuardError('sudo account mismatch')
+    return account.pw_uid
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def atomic_write(path, text, mode):
+    trusted_parents(path)
+    if os.path.lexists(path):
+        fd = trusted_fd(path, mode=mode)
+        os.close(fd)
+    directory = os.path.dirname(path)
+    fd, stage = tempfile.mkstemp(prefix='.sunshine-mic-', dir=directory)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(stage, path)
+        sync_directory(directory)
+    finally:
+        if os.path.exists(stage):
+            os.unlink(stage)
+
+
+def remove_owned(path, mode):
+    if os.path.lexists(path):
+        fd = trusted_fd(path, mode=mode)
+        os.close(fd)
+        os.unlink(path)
+        sync_directory(os.path.dirname(path))
+
+
+def ensure_directory():
+    trusted_parents('/etc/sunshine-mic')
+    try:
+        os.mkdir('/etc/sunshine-mic', 0o755)
+        os.chmod('/etc/sunshine-mic', 0o755)
+        sync_directory('/etc')
+    except FileExistsError:
+        pass
+    trusted_parents(PROFILE)
+
+
+def sudo_text(profile):
+    account = pwd.getpwuid(profile['uid'])
+    return (f'# Sunshine Mic managed schema 1\n{account.pw_name} ALL=(root) NOPASSWD: '
+            f'{HELPER} apply, {HELPER} inspect\n')
+
+
+def validate_sudo(text):
+    # Staging is root-owned, outside sudoers.d (never inadvertently parsed).
+    fd, stage = tempfile.mkstemp(prefix='.sudoers-', dir='/etc/sunshine-mic')
+    try:
+        os.fchmod(fd, 0o440)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        run(['/usr/bin/visudo', '-cf', stage])
+    finally:
+        os.unlink(stage)
+
+
+def user_systemctl(uid, *args, allowed=(0,)):
+    account = pwd.getpwuid(uid)
+    return run(['/usr/bin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i',
+                'PATH=/usr/bin:/bin', 'LANG=C', f'HOME={account.pw_dir}',
+                f'XDG_RUNTIME_DIR=/run/user/{uid}', f'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus',
+                '/usr/bin/systemctl', '--user', *args], allowed=allowed)
+
+
+def user_read(uid, path, *, missing=False):
+    """Read an untrusted user file only after irrevocably dropping root privileges."""
+    # The child is fixed code. The caller controls data paths, never executable code.
+    code = '''import json,os,stat,sys
+p=sys.argv[1]
+try:
+ s=os.lstat(p)
+ if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1 or s.st_mode&0o022: sys.exit(2)
+ f=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+ t=os.fstat(f)
+ if (s.st_dev,s.st_ino)!=(t.st_dev,t.st_ino): sys.exit(2)
+ with os.fdopen(f,'rb') as h: data=h.read(131073)
+ if len(data)>131072: sys.exit(2)
+ sys.stdout.write(json.dumps(data.decode('utf-8')))
+except FileNotFoundError: sys.exit(4)
+except OSError: sys.exit(2)
+'''
+    account = pwd.getpwuid(uid)
+    result = run(['/usr/bin/runuser', '-u', account.pw_name, '--', '/usr/bin/python3', '-I', '-c', code, path], allowed=(0, 2, 4))
+    if result.returncode == 4 and missing:
+        return None
+    if result.returncode:
+        raise GuardError('unsafe or unavailable user file')
+    return decode_json(result.stdout)
+
+
+def user_config_root(uid):
+    account = pwd.getpwuid(uid)
+    environment = user_systemctl(uid, 'show-environment').stdout
+    if any(line.startswith('CONFIGURATION_DIRECTORY=') for line in environment.splitlines()):
+        raise GuardError('CONFIGURATION_DIRECTORY is unsupported for managed Sunshine')
+    if 'SUNSHINE_MIGRATE_CONFIG=1' in environment.splitlines():
+        raise GuardError('automatic configuration migration is unsupported')
+    homes = [line.split('=', 1)[1] for line in environment.splitlines() if line.startswith('HOME=')]
+    if homes and homes != [account.pw_dir]:
+        raise GuardError('user manager HOME differs from the desktop account')
+    roots = [line.split('=', 1)[1] for line in environment.splitlines() if line.startswith('XDG_CONFIG_HOME=')]
+    root = roots[0] if roots else os.path.join(account.pw_dir, '.config')
+    if len(roots) > 1 or not root.startswith('/') or any(char.isspace() for char in root):
+        raise GuardError('unsupported user configuration root')
+    return root
+
+
+def recoverable_activation(uid, content):
+    if content != DROPIN:
+        return False
+    account = pwd.getpwuid(uid)
+    environment = user_systemctl(uid, 'show-environment').stdout
+    roots = [line.split('=', 1)[1] for line in environment.splitlines() if line.startswith('XDG_STATE_HOME=')]
+    root = roots[0] if roots else os.path.join(account.pw_dir, '.local/state')
+    if len(roots) > 1 or not root.startswith('/') or any(char.isspace() for char in root):
+        return False
+    text = user_read(uid, os.path.join(root, 'sunshine-mic/managed.json'), missing=True)
+    if text is None:
+        return False
+    receipt = decode_json(text)
+    return (type(receipt) is dict
+            and set(receipt) == {'schema', 'uid', 'profile_digest', 'dropin_sha256', 'state'}
+            and type(receipt['schema']) is int and receipt['schema'] == 1
+            and type(receipt['uid']) is int and receipt['uid'] == uid
+            and receipt['state'] in ('activating', 'resetting')
+            and receipt['dropin_sha256'] == hashlib.sha256(DROPIN.encode()).hexdigest()
+            and type(receipt['profile_digest']) is str
+            and re.fullmatch('[0-9a-f]{64}', receipt['profile_digest']) is not None)
+
+
+def unit_checks(uid, *, stopped):
+    properties = ('Id', 'Names', 'FragmentPath', 'DropInPaths', 'ExecStart', 'ActiveState', 'SubState', 'LoadState',
+                  'ConfigurationDirectory', 'Environment', 'EnvironmentFiles', 'UnsetEnvironment')
+    data = user_systemctl(uid, 'show', UNIT, *[f'--property={key}' for key in properties]).stdout
+    values = dict(line.split('=', 1) for line in data.splitlines() if '=' in line)
+    if (values.get('Id') != UNIT or values.get('LoadState') != 'loaded'
+            or values.get('FragmentPath') != f'/usr/lib/systemd/user/{UNIT}'):
+        raise GuardError('unsupported or shadowed Sunshine user unit')
+    if any(values.get(key) for key in ('ConfigurationDirectory', 'Environment', 'EnvironmentFiles', 'UnsetEnvironment')):
+        raise GuardError('unsupported Sunshine service environment overrides')
+    names = set(values.get('Names', '').split())
+    if UNIT not in names or names - {UNIT, 'sunshine.service'}:
+        raise GuardError('unexpected Sunshine service aliases')
+    alias = user_systemctl(uid, 'show', 'sunshine.service', '--property=Id', '--property=LoadState', allowed=(0, 1, 4)).stdout
+    aliases = dict(line.split('=', 1) for line in alias.splitlines() if '=' in line)
+    if aliases.get('LoadState') != 'not-found' and aliases.get('Id') != UNIT:
+        raise GuardError('shadowed Sunshine alias')
+    root = user_config_root(uid)
+    owned = os.path.join(root, 'systemd/user', UNIT + '.d', '90-sunshine-mic.conf')
+    paths = values.get('DropInPaths', '').split()
+    if paths not in ([], [owned]):
+        raise GuardError('foreign Sunshine service override')
+    content = user_read(uid, owned, missing=True)
+    if content is not None and content != DROPIN:
+        raise GuardError('modified managed activation')
+    if bool(paths) != (content is not None) and not recoverable_activation(uid, content):
+        raise GuardError('Sunshine service daemon reload required')
+    executable = '/usr/bin/sunshine-mic' if paths else '/usr/bin/sunshine'
+    arguments = executable + (' launch' if paths else '')
+    command = values.get('ExecStart', '')
+    if (command.count('path=') != 1 or not re.search(r'\{ path=' + re.escape(executable) + r' ; argv\[\]=' + re.escape(arguments) + r' ;', command)):
+        raise GuardError('unsupported Sunshine launch command')
+    trusted_text(f'/usr/lib/systemd/user/{UNIT}', mode=0o644)
+    if stopped and (values.get('ActiveState') not in ('inactive', 'failed') or values.get('SubState') not in ('dead', 'failed')):
+        raise GuardError('stop Sunshine explicitly before this operation')
+    return root
+
+
+def stopped_checks(uid, profiles):
+    root = unit_checks(uid, stopped=True)
+    # All users/processes: a direct start must not escape the service checks.
+    for entry in os.scandir('/proc'):
+        if not entry.name.isdecimal():
+            continue
+        try:
+            with open(entry.path + '/comm', encoding='utf-8') as stream:
+                name = stream.read().strip()
+            executable = os.readlink(entry.path + '/exe')
+        except FileNotFoundError:
+            continue
+        except ProcessLookupError:
+            continue
+        except PermissionError as exc:
+            raise GuardError('process inspection unavailable', 3) from exc
+        if name == 'sunshine' or executable.removesuffix(' (deleted)') == '/usr/bin/sunshine':
+            raise GuardError('a Sunshine process is still running')
+    ports = {p['base_port'] + offset for p in profiles if p for offset in (-5, 0, 1, 9, 10, 11, 12, 13, 21)}
+    output = run(['/usr/bin/ss', '-H', '-lntu']).stdout
+    for line in output.splitlines():
+        columns = line.split()
+        if len(columns) < 5:
+            raise GuardError('listener inspection unavailable', 3)
+        endpoint = columns[4]
+        try:
+            port = int(endpoint.rsplit(':', 1)[1])
+        except (IndexError, ValueError) as exc:
+            raise GuardError('listener inspection unavailable', 3) from exc
+        if port in ports:
+            raise GuardError('a Sunshine port is still listening')
+    return root
+
+
+def check_foreign(profile, pending):
+    for pattern in ('/etc/systemd/system/*sunshine*', '/etc/systemd/system/*Sunshine*',
+                    '/run/systemd/system/*sunshine*', '/run/systemd/system/*Sunshine*',
+                    '/usr/lib/systemd/system/*sunshine*', '/usr/lib/systemd/system/*Sunshine*',
+                    '/etc/sudoers.d/*sunshine*', '/etc/nftables.d/*sunshine*', '/usr/local/sbin/*sunshine*',
+                    '/usr/local/bin/*sunshine*'):
+        for path in glob.glob(pattern):
+            if path in (SUDOERS, f'/usr/lib/systemd/system/{GUARD_UNIT}'):
+                continue
+            raise GuardError('foreign Sunshine guard assets present')
+    # A root daemon or root-managed override is never adopted.
+    for path in (f'/etc/systemd/user/{UNIT}', f'/etc/systemd/user/{UNIT}.d',
+                 '/etc/systemd/user/sunshine.service', f'/run/systemd/user/{UNIT}',
+                 f'/run/systemd/user/{UNIT}.d', '/run/systemd/user/sunshine.service',
+                 f'/etc/systemd/system/{GUARD_UNIT}.d'):
+        if os.path.lexists(path):
+            raise GuardError('foreign Sunshine unit present')
+    tables = decode_json(run(['/usr/bin/nft', '-j', 'list', 'tables']).stdout).get('nftables', [])
+    for entry in tables:
+        table = entry.get('table', {})
+        if 'sunshine' in table.get('name', '').lower() and (table.get('name') != TABLE or table.get('family') != 'inet'):
+            raise GuardError('foreign Sunshine firewall table present')
+    kernel = kernel_table()
+    if kernel is not None:
+        tables = [item['table'] for item in kernel.get('nftables', []) if 'table' in item]
+        if not (profile or pending) or len(tables) != 1 or tables[0].get('comment') != MARKER:
+            raise GuardError('unowned managed firewall table')
+    delegation = trusted_text(SUDOERS, mode=0o440, missing=True)
+    candidates = [profile] + ([pending['before'], pending['after']] if pending else [])
+    if delegation is not None and not any(p and delegation == sudo_text(p) for p in candidates):
+        raise GuardError('unowned or modified sudo delegation')
+
+
+def check_owner(uid, profile, pending):
+    for item in [profile] + ([pending['before'], pending['after']] if pending else []):
+        if item is not None and item['uid'] != uid:
+            raise GuardError('profile belongs to another desktop account')
+
+
+def reset_checks(uid, profiles):
+    root = stopped_checks(uid, profiles)
+    verify_disabled_binary()
+    text = user_read(uid, os.path.join(root, 'sunshine/sunshine.conf'), missing=True)
+    validate_reset_config(text or '')
+
+
+def inspect():
+    with trusted_lock():
+        profile, pending = read_profile(), read_pending()
+        if 'SUDO_UID' in os.environ:
+            check_owner(authenticated_uid(), profile, pending)
+        issues = []
+        kernel = kernel_table()
+        verification_unavailable = False
+        try:
+            check_foreign(profile, pending)
+        except GuardError as error:
+            issues.append('verification_unavailable' if error.code == 3 else 'managed_asset_conflict')
+            verification_unavailable = error.code == 3
+        if pending:
+            issues.append('incomplete_transition')
+        if profile is None:
+            if kernel is not None:
+                issues.append('orphaned_firewall_table')
+            verified = False
+        else:
+            verified = not pending and verify_kernel(profile, kernel)
+            if not verified:
+                issues.append('kernel_rules_mismatch')
+            try:
+                delegation = trusted_text(SUDOERS, mode=0o440, missing=True)
+                if delegation != sudo_text(profile):
+                    issues.append('delegation_missing')
+                enabled = run(['/usr/bin/systemctl', 'is-enabled', GUARD_UNIT], allowed=(0, 1)).stdout.strip()
+                if enabled != 'enabled':
+                    issues.append('guard_not_boot_enabled')
+            except GuardError as error:
+                issues.append('verification_unavailable' if error.code == 3 else 'managed_asset_conflict')
+                verification_unavailable = verification_unavailable or error.code == 3
+        result = {'profile': profile, 'pending': bool(pending), 'protection_verified': verified,
+                  'issues': issues, 'kernel': kernel}
+        print(json.dumps(result, sort_keys=True))
+        return 3 if verification_unavailable else (1 if issues else 0)
+
+
+def mutate(operation, uid, requested):
+    start_unit = False
+    with trusted_lock(exclusive=True):
+        before, pending = read_profile(), read_pending()
+        check_owner(uid, before, pending)
+        if requested is not None and requested['uid'] != uid:
+            raise GuardError('requested profile does not match sudo account')
+        if operation in ('configure', 'reconfigure'):
+            after = requested
+            if not after['enabled']:
+                raise GuardError('setup requires explicit microphone opt-in')
+            if operation == 'configure' and before is not None and before != after and not pending:
+                raise GuardError('different settings require reconfigure')
+            if operation == 'reconfigure' and before is None and not pending:
+                raise GuardError('setup is required before reconfigure')
+        elif operation == 'disable':
+            if before is None and not pending:
+                raise GuardError('no managed profile')
+            source = before or pending['before']
+            after = dict(source, enabled=False)
+        else:
+            after = None
+        if pending:
+            if pending['operation'] != operation or pending['after'] != after:
+                raise GuardError('repeat the identical incomplete operation first')
+            original = pending['before']
+            if before not in (original, after):
+                raise GuardError('profile changed during incomplete transition')
+        else:
+            original = before
+        check_foreign(before, pending)
+        profiles = [original, before, after]
+        if operation == 'disable':
+            unit_checks(uid, stopped=False)
+        elif operation == 'reset':
+            if original is None:
+                if pending is None:
+                    raise GuardError('no managed profile')
+            kernel = kernel_table()
+            if pending and original is not None and kernel is None:
+                # Runtime rules vanish on reboot; durable same-operation intent
+                # authorizes restoring denial, never adopting a changed table.
+                recovery_deny = deny_rules(profiles)
+                run(['/usr/bin/nft', '-c', '-f', '-'], data=recovery_deny)
+                run(['/usr/bin/nft', '-f', '-'], data=recovery_deny)
+                kernel = kernel_table()
+            intact = original is not None and verify_kernel(original, kernel)
+            if pending and original is not None:
+                intact = intact or verify_kernel(dict(original, enabled=False), kernel)
+            if not intact:
+                raise GuardError('managed firewall changed; restore protection before reset')
+            if not pending and trusted_text(SUDOERS, mode=0o440, missing=True) != sudo_text(original):
+                raise GuardError('managed delegation changed; restore it before reset')
+            reset_checks(uid, profiles)
+        else:
+            stopped_checks(uid, profiles)
+            online = validate_peer(after)
+        ensure_directory()
+        if after is not None:
+            validate_sudo(sudo_text(after))
+            run(['/usr/bin/nft', '-c', '-f', '-'], data=render_rules(after))
+        deny = deny_rules(profiles)
+        run(['/usr/bin/nft', '-c', '-f', '-'], data=deny)
+        intent = {'schema': 1, 'operation': operation, 'before': original, 'after': after}
+        atomic_write(PENDING, json.dumps(intent, sort_keys=True) + '\n', 0o600)
+        # This transaction protects both old and new ports across interruption.
+        run(['/usr/bin/nft', '-f', '-'], data=deny)
+        if operation == 'reset':
+            # No ExecStop flush exists; disabling boot activation does not remove protection.
+            run(['/usr/bin/systemctl', 'disable', '--now', GUARD_UNIT])
+            remove_owned(SUDOERS, 0o440)
+            remove_owned(PROFILE, 0o644)
+            run(['/usr/bin/nft', '-f', '-'], data=f'destroy table inet {TABLE}\n')
+        else:
+            atomic_write(SUDOERS, sudo_text(after), 0o440)
+            atomic_write(PROFILE, json.dumps(after, sort_keys=True) + '\n', 0o644)
+            apply_profile(after)
+            if not verify_kernel(after, kernel_table()):
+                raise GuardError('kernel protection verification failed', 1)
+            start_unit = True
+        remove_owned(PENDING, 0o600)
+    # apply acquires its own shared lock: never synchronously start it under LOCK_EX.
+    if start_unit:
+        try:
+            run(['/usr/bin/systemctl', 'enable', GUARD_UNIT])
+            run(['/usr/bin/systemctl', 'restart', GUARD_UNIT])
+        except GuardError as exc:
+            with trusted_lock(exclusive=True):
+                # Never replace another operation's intent or newer profile.
+                if read_profile() == after and read_pending() is None:
+                    atomic_write(PENDING, json.dumps(intent, sort_keys=True) + '\n', 0o600)
+                    run(['/usr/bin/nft', '-f', '-'], data=deny)
+            raise GuardError('guard installed; system activation incomplete', exc.code) from exc
+    with trusted_lock():
+        if read_profile() != after or read_pending() is not None:
+            raise GuardError('configuration changed during system activation')
+        if after is not None and not verify_kernel(after, kernel_table()):
+            raise GuardError('kernel protection verification failed', 1)
+        if after is None and kernel_table() is not None:
+            raise GuardError('reset firewall verification failed', 1)
+    result = {'profile': after, 'pending': False, 'protection_verified': after is not None,
+              'issues': [], 'operation': operation}
+    if operation in ('configure', 'reconfigure'):
+        result['peer_online'] = online
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+def main():
+    if os.geteuid() != 0:
+        raise GuardError('root helper requires sudo', 2)
+    if len(sys.argv) != 2 or sys.argv[1] not in ('apply', 'inspect', 'configure', 'reconfigure', 'disable', 'reset'):
+        raise GuardError('invalid root helper command')
+    operation = sys.argv[1]
+    if operation == 'inspect':
+        return inspect()
+    if operation == 'apply':
+        with trusted_lock():
+            profile = read_profile()
+            if profile is None or read_pending() is not None:
+                raise GuardError('protected launch has no complete profile', 1)
+            # Caller must be the selected user or systemd/root, not another sudo user.
+            if 'SUDO_UID' in os.environ and authenticated_uid() != profile['uid']:
+                raise GuardError('profile belongs to another desktop account')
+            check_foreign(profile, None)
+            apply_profile(profile)
+            verified = verify_kernel(profile, kernel_table())
+            if not verified:
+                raise GuardError('kernel protection verification failed', 1)
+            print(json.dumps({'profile': profile, 'pending': False, 'protection_verified': True, 'issues': []}, sort_keys=True))
+            return 0
+    uid = authenticated_uid()
+    requested = None
+    if operation in ('configure', 'reconfigure'):
+        text = sys.stdin.read(131073)
+        if len(text) > 131072:
+            raise GuardError('configuration input too large')
+        requested = validate_profile(decode_json(text))
+    return mutate(operation, uid, requested)
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except GuardError as error:
+        print(json.dumps({'profile': None, 'pending': True, 'protection_verified': False,
+                          'issues': [str(error)]}, sort_keys=True))
+        print('Sunshine Mic guard: ' + str(error), file=sys.stderr)
+        sys.exit(error.code)
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        print(json.dumps({'profile': None, 'pending': True, 'protection_verified': False,
+                          'issues': ['verification unavailable']}, sort_keys=True))
+        print('Sunshine Mic guard: verification unavailable', file=sys.stderr)
+        sys.exit(3)

@@ -11,18 +11,13 @@ microphone.
 
 ## Compatible clients
 
-Stock Moonlight clients do not send a microphone. These do, using the wire format that Sunshine-Foundation
-introduced:
+The community preview targets microphone-capable **VoidLink on iPad**. Stock Moonlight does not transmit
+microphone audio. Other microphone-capable client forks exist, but they are not qualified for this preview.
+The earlier live acceptance below is development history, not evidence for the new package.
+Allow microphone access in iPadOS and enable VoidLink's mic option **before** connecting.
 
-| Client | Platform |
-|---|---|
-| VoidLink (App Store lists "microphone redirection" with Sunshine-Foundation hosts) | iPhone / iPad |
-| qiin2333 `moonlight-qt` (AUR: `moonlight-qt-qiin2333`) | Linux, Windows, macOS |
-| qiin2333 `moonlight-android` | Android |
-
-VoidLink compatibility was confirmed in **one** live acceptance session on one host/client pair (see
-[Live acceptance](#live-acceptance-one-session)); it has not been tested beyond that. Turn the client's microphone
-option on **before** connecting; the client negotiates the stream when the session starts.
+For requirements, first-run account/Desktop/pairing, protected opt-in and rollback, use the
+[canonical Omarchy guide](../packaging/omarchy/README.md). Do not mix its managed setup with legacy rules.
 
 ## What the host does
 
@@ -52,10 +47,9 @@ option on **before** connecting; the client negotiates the stream when the sessi
   constant). The host accepts datagrams only from the address that opened the session's RTSP connection. Clients
   behind one NAT address cannot be told apart. On a shared LAN segment a host can forge the source address; inside
   a tailnet WireGuard ties source addresses to peers, which is why this fork is meant for Tailscale.
-- **Injected audio becomes dictated text.** Whatever reaches the virtual microphone is indistinguishable from
-  speech. If a dictation tool types its output (for example Voxtype with `output.mode = "type"`), injected audio
-  becomes keystrokes in the focused window — including a terminal. Dictate into a scratch text editor, not a
-  terminal, while the microphone is connected.
+- **Injected audio is application input.** Applications consuming Moonlight Mic cannot distinguish injected
+  speech from intended speech. Any downstream voice-command/transcription software adds its own risks;
+  none is installed or configured by this microphone-only product. Qualify audio with a harmless input meter.
 - **Tested only behind a restrictive host guard.** The live acceptance ran with a host firewall rule set in place that
   let UDP 48001 through only from the one client's tailnet address on the Tailscale interface and dropped every other
   source and interface, IPv4 and IPv6. Nothing in this fork makes the microphone stream safe on its own; without such
@@ -140,35 +134,40 @@ If you run an older build, set both options to `disabled` in `sunshine.conf` you
 
 ## Deployment: one client over Tailscale
 
-1. Pair and verify the client with stock behaviour first. Leave `stream_mic` disabled (the default) until the
-   restriction below is in place.
-2. Find the client's Tailscale address (`tailscale status`) — it is a `100.x.y.z` address; use it as
-   `<client-tailscale-ip>` below. Do not use LAN ranges.
-3. Allow UDP `base port + 12` (48001 by default) **only from that address, on `tailscale0`**:
+Use the [canonical protected setup guide](../packaging/omarchy/README.md#protected-microphone-opt-in).
+It requires an explicit base port and peer, stopped Sunshine, an authenticated Tailscale interface and a
+local keyboard or independent SSH connection. The CLI never stops an active stream automatically.
 
-   ```bash
-   sudo ufw allow in on tailscale0 from <client-tailscale-ip> to any port 48001 proto udp comment 'sunshine-mic'
-   ```
+The managed root helper owns only `inet sunshine_mic_managed`, with an input hook at priority −10.
+Its selected IPv4 peer must arrive on `tailscale0`; every other IPv4/IPv6 path to UDP base+12 is dropped.
+Listed alternate client LAN addresses receive targeted non-Tailscale TCP rejects on base−5/base/base+21.
+This is not physical-device authentication: an unlisted new LAN address is not covered. Select the manually
+added Tailscale host, not the discovered LAN host, or receiver source matching can result in silence.
 
-4. **Check what that rule actually enforces before relying on it.** Tailscale installs a `ts-input` chain at the
-   top of `INPUT` that normally contains `-i tailscale0 -j ACCEPT`; in that case a UFW rule on `tailscale0` does
-   not filter tailnet traffic at all. Inspect the real order:
+The root profile is authoritative. Root transitions use durable pending state and deny-first protection;
+incomplete state blocks the managed launch. The user activation preserves the canonical unit's other
+behavior and pins both base port and microphone policy through `/usr/bin/sunshine-mic launch`.
+The wrapper fails closed on missing/corrupt state, wrong owner, unresolved transitions or guard failure.
+No package-global user override is installed and package hooks never opt in or restart the session.
 
-   ```bash
-   sudo iptables -S INPUT | head -20
-   sudo iptables -S ts-input
-   tailscale debug prefs | grep -i netfilter
-   ```
+Another firewall chain can deny traffic accepted here. A oneshot active state does not establish actual
+protection: status inspects kernel rules through the fixed privileged helper. Arbitrary administrator
+firewall flushes during a session defeat the guard until reapplication; this is startup gating, not a
+continuous firewall watchdog. Never broaden ingress or remove a foreign guard to make setup succeed.
 
-   If `ts-input` accepts everything from `tailscale0`, restrict access with a tailnet ACL/grant that only lets the
-   client reach this host's port, or with an nftables rule at an earlier hook priority. Until you have checked, do
-   not describe the setup as "single-client enforced". The fork itself ignores datagrams from any address other
-   than the owning session's, so the firewall layer is defence in depth.
-5. Only now opt in: set `stream_mic = enabled` in `sunshine.conf` (or the web UI, **Audio/Video**) and restart
-   Sunshine. Leave `mic_default_source` disabled for a first trial and select "Moonlight Mic" in the application.
-6. Dictate into a scratch text editor, not a terminal.
+`sunshine-mic disable` applies deny-all immediately without restarting or promising to remove a current
+socket/source. `reset` requires stopped Sunshine, owned unchanged assets and proven disabled saved/default
+microphone settings. Reset before stock rollback; see the guide rather than manually deleting root assets.
 
-To remove the rule: `sudo ufw delete allow in on tailscale0 from <client-tailscale-ip> to any port 48001 proto udp`.
+## Troubleshooting
+
+Run `sunshine-mic doctor --json` as the desktop user and review the redacted output before sharing it.
+No node without a session is normal. An open socket or created node is not proof that microphone packets
+arrived or were accepted. Check VoidLink's permission/option, peer route/availability, the manually added
+Tailscale session address and actual firewall protection separately. Another firewall may deny packets.
+If packet evidence is unavailable, report it as unavailable rather than infer traffic from configuration.
+Diagnostics never record audio or restart services. `--show-addresses` reveals addresses, not credentials.
+Missing noninteractive inspection privilege means protection **unverified**, not healthy.
 
 ## Wire format
 

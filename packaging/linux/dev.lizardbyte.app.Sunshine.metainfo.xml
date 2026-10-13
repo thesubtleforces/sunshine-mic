@@ -2,55 +2,31 @@
 <component type="desktop">
   <id>@PROJECT_FQDN@</id>
 
-  <name>@PROJECT_NAME@</name>
+  <name>@PROJECT_DISPLAY_NAME@</name>
   <summary>@PROJECT_BRIEF_DESCRIPTION@</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>@PROJECT_LICENSE@</project_license>
 
-  <supports>
-    <control>pointing</control>
-    <control>keyboard</control>
-    <control>touch</control>
-    <control>gamepad</control>
-  </supports>
-
   <url type="homepage">@PROJECT_HOMEPAGE_URL@</url>
-  <url type="bugtracker">https://github.com/LizardByte/Sunshine/issues</url>
-  <url type="faq">https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2troubleshooting.html</url>
-  <url type="help">https://docs.lizardbyte.dev/projects/sunshine</url>
-  <url type="donation">https://app.lizardbyte.dev/#Donate</url>
-  <url type="translate">https://translate.lizardbyte.dev</url>
-  <url type="contact">https://app.lizardbyte.dev/support</url>
+  <url type="bugtracker">@SUNSHINE_PUBLISHER_ISSUE_URL@</url>
+  <url type="faq">https://github.com/thesubtleforces/sunshine-mic/blob/mic/docs/mic_streaming.md</url>
+  <url type="help">https://github.com/thesubtleforces/sunshine-mic/blob/mic/packaging/omarchy/README.md</url>
+  <url type="contact">@SUNSHINE_PUBLISHER_ISSUE_URL@</url>
 
   <description>
     <p>@PROJECT_LONG_DESCRIPTION@</p>
 
-    <p>NOTE: Sunshine requires additional installation steps on Flatpak.</p>
-    <p>
-      Run <code>flatpak run --command=additional-install.sh @PROJECT_FQDN@</code>
-    </p>
-    <p>NOTE: Sunshine uses a self-signed certificate. The web browser will report it as not secure, but it is safe.</p>
+    <p>Published by @SUNSHINE_PUBLISHER_NAME@. Based on Sunshine by LizardByte and its contributors,
+      with microphone work from Nova. This independent fork is not an official Omarchy product.</p>
+    <p>Microphone forwarding requires explicit opt-in. Review the installation guide and security
+      limitations before enabling it. Keep the web interface local or use an authenticated private path;
+      do not expose it to the public Internet.</p>
   </description>
-
-  <releases>
-    <release version="@PROJECT_VERSION@" date="@PROJECT_YEAR@-@PROJECT_MONTH@-@PROJECT_DAY@">
-      <url>https://github.com/LizardByte/Sunshine/releases/tag/v@PROJECT_VERSION@</url>
-      <description>
-        <p>See the changelog on GitHub</p>
-      </description>
-    </release>
-  </releases>
 
   <developer id="dev.lizardbyte">
     <name>LizardByte</name>
   </developer>
-  <screenshots>
-    <screenshot type="default">
-      <image>https://app.lizardbyte.dev/Sunshine/assets/img/screenshots/01-sunshine-welcome-page.png</image>
-      <caption>Sunshine welcome page</caption>
-    </screenshot>
-  </screenshots>
   <content_rating type="oars-1.0">
     <content_attribute id="language-profanity">moderate</content_attribute>
     <content_attribute id="language-humor">mild</content_attribute>

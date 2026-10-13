@@ -1,0 +1,19 @@
+[Unit]
+Description=Sunshine Mic managed microphone ingress guard
+Documentation=https://github.com/thesubtleforces/sunshine-mic/blob/mic/packaging/omarchy/README.md
+DefaultDependencies=no
+After=local-fs.target ufw.service nftables.service
+Before=network-pre.target shutdown.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sunshine-mic/guard apply
+ExecReload=/usr/lib/sunshine-mic/guard apply
+RemainAfterExit=yes
+# No ExecStop: stopping or disabling this unit must retain ingress protection.
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

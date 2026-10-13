@@ -1,0 +1,516 @@
+{
+  "schema": 1,
+  "asset": {
+    "name": "Linux-x86_64-ffmpeg.tar.gz",
+    "url": "https://github.com/LizardByte/build-deps/releases/download/v2026.910.121303/Linux-x86_64-ffmpeg.tar.gz",
+    "sha256": "496d2bbb674d01e6033e31b9dfc15cbc9dc1494e882a4505f6ab1e03f75b385c",
+    "release": "v2026.910.121303",
+    "build_deps_revision": "a1fe2841cbc0d8c4501a1006d2d1cb88f219cc8c",
+    "libraries": {
+      "libavcodec.a": "FFmpeg",
+      "libavutil.a": "FFmpeg",
+      "libswscale.a": "FFmpeg",
+      "libcbs.a": "FFmpeg",
+      "libSvtAv1Enc.a": "SVT-AV1",
+      "libx264.a": "x264",
+      "libx265.a": "x265",
+      "libhdr10plus.a": "x265"
+    }
+  },
+  "sources": [
+    {
+      "name": "build-deps",
+      "repository": "https://github.com/LizardByte/build-deps.git",
+      "revision": "a1fe2841cbc0d8c4501a1006d2d1cb88f219cc8c",
+      "url": "https://codeload.github.com/LizardByte/build-deps/tar.gz/a1fe2841cbc0d8c4501a1006d2d1cb88f219cc8c",
+      "sha256": "7193665168eb8becf94ba1386d6aa72692512db34f88415b93be8af0270a6ca5",
+      "notices": [
+        "LICENSE"
+      ],
+      "tag": null
+    },
+    {
+      "name": "FFmpeg",
+      "repository": "https://github.com/FFmpeg/FFmpeg.git",
+      "revision": "bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa",
+      "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa",
+      "sha256": "fb1931fd4eb29297ee1c1017a24f800c4d8fbea35b4f2aaeb28308a48a9149b4",
+      "notices": [
+        "COPYING.GPLv2",
+        "COPYING.GPLv3",
+        "COPYING.LGPLv2.1",
+        "COPYING.LGPLv3",
+        "LICENSE.md",
+        "tests/checkasm/ext/LICENSE",
+        "tests/checkasm/ext/src/html_data/LICENSE"
+      ],
+      "tag": null
+    },
+    {
+      "name": "SVT-AV1",
+      "repository": "https://github.com/LizardByte-infrastructure/SVT-AV1.git",
+      "revision": "9292ec8e32bce26f781f277ec8739b53426c4300",
+      "url": "https://codeload.github.com/LizardByte-infrastructure/SVT-AV1/tar.gz/9292ec8e32bce26f781f277ec8739b53426c4300",
+      "sha256": "bf7e53dd132ff423d611af86f58bdc6dc18a2b3456f572097a5386ec8f83cc95",
+      "notices": [
+        "LICENSE-BSD2.md",
+        "LICENSE.md",
+        "third_party/fastfeat/LICENSE",
+        "third_party/safestringlib/LICENSE"
+      ],
+      "tag": null
+    },
+    {
+      "name": "x264",
+      "repository": "https://github.com/LizardByte-infrastructure/x264.git",
+      "revision": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+      "url": "https://codeload.github.com/LizardByte-infrastructure/x264/tar.gz/b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+      "sha256": "cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9",
+      "notices": [
+        "COPYING"
+      ],
+      "tag": null
+    },
+    {
+      "name": "x265",
+      "repository": "https://github.com/LizardByte-infrastructure/x265_git.git",
+      "revision": "1d117bed4747758b51bd2c124d738527e30392cb",
+      "url": "https://codeload.github.com/LizardByte-infrastructure/x265_git/tar.gz/1d117bed4747758b51bd2c124d738527e30392cb",
+      "sha256": "2fc3a96c2423db101f29b714d3551f1126a35c94dc5f5160633c70d482d1af6d",
+      "notices": [
+        "COPYING",
+        "source/dynamicHDR10/LICENSE.txt",
+        "source/dynamicHDR10/json11/LICENSE.txt"
+      ],
+      "tag": null
+    },
+    {
+      "name": "AMF",
+      "repository": "https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git",
+      "revision": "eadd00804d5f7e5cd8c85d540073198312870776",
+      "url": "https://codeload.github.com/GPUOpen-LibrariesAndSDKs/AMF/tar.gz/eadd00804d5f7e5cd8c85d540073198312870776",
+      "sha256": "d9cde24be31e847e78d31e4d01cfc6a461eac35c77557578436a407f621de26b",
+      "notices": [
+        "LICENSE.txt",
+        "Thirdparty/amd/AmdDxExt/LICENSE.txt"
+      ],
+      "tag": null
+    },
+    {
+      "name": "Vulkan-Headers",
+      "repository": "https://github.com/KhronosGroup/Vulkan-Headers.git",
+      "revision": "ee2ec5fd83dafce291024683b50dc89219333076",
+      "url": "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/ee2ec5fd83dafce291024683b50dc89219333076",
+      "sha256": "df7a152381a7fdaf98e36de7716b8d6d6ead776764bc76d1a1aef9049d1bca89",
+      "notices": [
+        "LICENSE.md"
+      ],
+      "tag": null
+    },
+    {
+      "name": "Vulkan-Loader",
+      "repository": "https://github.com/KhronosGroup/Vulkan-Loader.git",
+      "revision": "b8b96a2862bff1eed468e602d43f706beae89cf1",
+      "url": "https://codeload.github.com/KhronosGroup/Vulkan-Loader/tar.gz/b8b96a2862bff1eed468e602d43f706beae89cf1",
+      "sha256": "351e6cd2f917ca7317546f856bb33260c9ccebd4d86a96e02a874d7e738e1a6d",
+      "notices": [
+        "LICENSE.txt"
+      ],
+      "tag": null
+    },
+    {
+      "name": "nv-codec-headers-11",
+      "repository": "https://github.com/FFmpeg/nv-codec-headers.git",
+      "revision": "625b3199e94db49e3bb0dc797fc4cffbf7115d81",
+      "url": "https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/625b3199e94db49e3bb0dc797fc4cffbf7115d81",
+      "sha256": "7f45d3e0afd1fc57edc76c414246354258fe2a5a0c6c6c97e499ed3bc267443b",
+      "notices": [
+        "include/ffnvcodec/nvEncodeAPI.h",
+        "include/ffnvcodec/dynlink_cuda.h",
+        "include/ffnvcodec/dynlink_cuviddec.h",
+        "include/ffnvcodec/dynlink_nvcuvid.h"
+      ],
+      "tag": "n11.0.10.3",
+      "notice_note": "Redistribution notices are embedded in header comments, not standalone LICENSE files."
+    },
+    {
+      "name": "nv-codec-headers-12",
+      "repository": "https://github.com/FFmpeg/nv-codec-headers.git",
+      "revision": "956b49b0d3a19465e8eb997b7e39c548ad9dd4b2",
+      "url": "https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/956b49b0d3a19465e8eb997b7e39c548ad9dd4b2",
+      "sha256": "6461271a1032ee9f0c1b5e83c8dd14aec643aa0a5b555b123b031fbc3c75a1ae",
+      "notices": [
+        "include/ffnvcodec/nvEncodeAPI.h",
+        "include/ffnvcodec/dynlink_cuda.h",
+        "include/ffnvcodec/dynlink_cuviddec.h",
+        "include/ffnvcodec/dynlink_nvcuvid.h"
+      ],
+      "tag": "n12.0.16.2",
+      "notice_note": "Redistribution notices are embedded in header comments, not standalone LICENSE files."
+    },
+    {
+      "name": "nv-codec-headers-13",
+      "repository": "https://github.com/FFmpeg/nv-codec-headers.git",
+      "revision": "88fee5c37318c991a8762d423530f91681e32e3a",
+      "url": "https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/88fee5c37318c991a8762d423530f91681e32e3a",
+      "sha256": "a5f838f82e6208505102c2ce257673288846b18092f1f66368340b1338cd93f4",
+      "notices": [
+        "include/ffnvcodec/nvEncodeAPI.h",
+        "include/ffnvcodec/dynlink_cuda.h",
+        "include/ffnvcodec/dynlink_cuviddec.h",
+        "include/ffnvcodec/dynlink_nvcuvid.h"
+      ],
+      "tag": "n13.0.19.1",
+      "notice_note": "Redistribution notices are embedded in header comments, not standalone LICENSE files."
+    },
+    {
+      "name": "nv-codec-headers-13-1",
+      "repository": "https://github.com/FFmpeg/nv-codec-headers.git",
+      "revision": "0a6fba9a2820628b8103464f4c8753ee05838baa",
+      "url": "https://codeload.github.com/FFmpeg/nv-codec-headers/tar.gz/0a6fba9a2820628b8103464f4c8753ee05838baa",
+      "sha256": "1d2070546de622fd6074a99d4b283e727988b7c3624ef85f97b88962264314d2",
+      "notices": [
+        "include/ffnvcodec/nvEncodeAPI.h",
+        "include/ffnvcodec/dynlink_cuda.h",
+        "include/ffnvcodec/dynlink_cuviddec.h",
+        "include/ffnvcodec/dynlink_nvcuvid.h"
+      ],
+      "tag": "n13.1.15.0",
+      "notice_note": "Redistribution notices are embedded in header comments, not standalone LICENSE files."
+    },
+    {
+      "name": "libva",
+      "repository": "https://github.com/intel/libva.git",
+      "revision": "710eb465c6277ee2cac3e6948767b01eebe7e77a",
+      "url": "https://codeload.github.com/intel/libva/tar.gz/710eb465c6277ee2cac3e6948767b01eebe7e77a",
+      "sha256": "f207ab793203a21fb153ad5ffb0e3e268f98826c850009353b094a4ab5da8150",
+      "notices": [
+        "COPYING"
+      ],
+      "tag": "2.24.1"
+    },
+    {
+      "name": "boost",
+      "repository": "https://github.com/boostorg/boost.git",
+      "revision": "boost-1.89.0",
+      "url": "https://github.com/boostorg/boost/releases/download/boost-1.89.0/boost-1.89.0-cmake.tar.xz",
+      "sha256": "67acec02d0d118b5de9eb441f5fb707b3a1cdd884be00ca24b9a73c995511f74",
+      "notices": [
+        "LICENSE_1_0.txt",
+        "tools/inspect/src/license_check.cpp",
+        "tools/inspect/src/copyright_check.hpp",
+        "tools/inspect/src/copyright_check.cpp",
+        "tools/inspect/src/license_check.hpp",
+        "tools/boost_install/test/iostreams/bzip2-1.0.8/LICENSE",
+        "tools/boost_install/test/iostreams/zlib-1.2.11/contrib/dotzlib/LICENSE_1_0.txt",
+        "tools/build/LICENSE.txt",
+        "tools/bcp/licence_info.cpp",
+        "tools/bcp/licence_info.hpp",
+        "tools/boostlook/LICENSE",
+        "tools/boostbook/xsl/caramel/LICENSE",
+        "tools/quickbook/test/doc-info/copyright1.gold-html",
+        "tools/quickbook/test/doc-info/copyright1.gold",
+        "tools/quickbook/test/doc-info/copyright1.quickbook",
+        "tools/quickbook/test/doc-info/copyright-fail1.quickbook",
+        "tools/quickbook/test/doc-info/copyright-fail2.quickbook",
+        "tools/docca/LICENSE_1_0.txt",
+        "libs/url/LICENSE_1_0.txt",
+        "libs/charconv/doc/charconv/copyright.adoc",
+        "libs/charconv/LICENSE",
+        "libs/system/doc/system/copyright.adoc",
+        "libs/leaf/LICENSE_1_0.txt",
+        "libs/assign/LICENSE",
+        "libs/numeric/interval/LICENSE",
+        "libs/numeric/odeint/LICENSE",
+        "libs/pool/LICENSE",
+        "libs/dynamic_bitset/LICENSE",
+        "libs/outcome/doc/src/themes/boostdoc/layouts/shortcodes/notice.html",
+        "libs/outcome/doc/src/themes/boostdoc/LICENSE",
+        "libs/array/doc/array/copyright.adoc",
+        "libs/container_hash/doc/hash/copyright.adoc",
+        "libs/callable_traits/LICENSE.md",
+        "libs/mysql/LICENSE_1_0.txt",
+        "libs/safe_numerics/LICENSE_1_0.txt",
+        "libs/contract/LICENSE_1_0.txt",
+        "libs/pfr/LICENSE_1_0.txt",
+        "libs/beast/LICENSE_1_0.txt",
+        "libs/beast/test/bench/parser/nodejs-parser/LICENSE-MIT",
+        "libs/beast/test/extern/zlib-1.2.12/contrib/dotzlib/LICENSE_1_0.txt",
+        "libs/hash2/doc/hash2/copyright.adoc",
+        "libs/parser/LICENSE_1_0.txt",
+        "libs/concept_check/LICENSE",
+        "libs/lambda2/doc/lambda2/copyright.adoc",
+        "libs/move/LICENSE",
+        "libs/static_string/LICENSE_1_0.txt",
+        "libs/math/doc/sf/license.qbk",
+        "libs/math/LICENSE",
+        "libs/format/LICENSE",
+        "libs/scope/LICENSE",
+        "libs/redis/LICENSE.txt",
+        "libs/compute/LICENSE_1_0.txt",
+        "libs/locale/LICENSE",
+        "libs/ptr_container/LICENSE",
+        "libs/uuid/doc/uuid/copyright.adoc",
+        "libs/uuid/LICENSE",
+        "libs/hana/LICENSE.md",
+        "libs/algorithm/LICENSE",
+        "libs/histogram/LICENSE",
+        "libs/logic/LICENSE",
+        "libs/stl_interfaces/LICENSE_1_0.txt",
+        "libs/container/LICENSE_1_0.txt",
+        "libs/describe/doc/describe/copyright.adoc",
+        "libs/yap/LICENSE_1_0.txt",
+        "libs/yap/example/autodiff_library/LICENSE",
+        "libs/compat/doc/compat/copyright.adoc",
+        "libs/tokenizer/LICENSE",
+        "libs/nowide/LICENSE",
+        "libs/iostreams/LICENSE",
+        "libs/iostreams/test/bzip2-1.0.8/LICENSE",
+        "libs/iostreams/test/zlib-1.2.11/contrib/dotzlib/LICENSE_1_0.txt",
+        "libs/python/LICENSE_1_0.txt",
+        "libs/bloom/doc/bloom/copyright.adoc",
+        "libs/qvm/LICENSE_1_0.txt",
+        "libs/signals2/LICENSE",
+        "libs/rational/LICENSE",
+        "libs/mqtt5/LICENSE",
+        "libs/gil/LICENSE.txt",
+        "libs/test/LICENSE",
+        "libs/json/LICENSE_1_0.txt",
+        "libs/variant2/doc/variant2/copyright.adoc",
+        "libs/multiprecision/LICENSE",
+        "libs/hof/LICENSE.md",
+        "libs/hof/doc/src/license.md",
+        "libs/exception/LICENSE_1_0.txt",
+        "libs/mpl/LICENSE",
+        "libs/property_map/LICENSE",
+        "libs/date_time/xmldoc/license.xml",
+        "libs/date_time/LICENSE",
+        "libs/unordered/doc/modules/ROOT/pages/copyright.adoc",
+        "libs/unordered/LICENSE",
+        "libs/geometry/LICENSE_1_0.txt",
+        "libs/geometry/doc/src/docutils/tools/doxygen_xml2qbk/contrib/rapidxml-1.13/license.txt",
+        "libs/geometry/doc/src/copyright_block.qbk",
+        "libs/geometry/doc/copyright_note_policy.txt"
+      ],
+      "tag": "boost-1.89.0"
+    },
+    {
+      "name": "nlohmann-json",
+      "repository": "https://github.com/nlohmann/json.git",
+      "revision": "v3.11.3",
+      "url": "https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz",
+      "sha256": "d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d",
+      "notices": [
+        "LICENSE.MIT"
+      ],
+      "tag": "v3.11.3"
+    },
+    {
+      "name": "GCC",
+      "repository": "https://forge.sourceware.org/gcc/gcc",
+      "revision": "d564253eb6c859e266d3cae18e82fb4db9a88316",
+      "url": "https://forge.sourceware.org/gcc/gcc/archive/d564253eb6c859e266d3cae18e82fb4db9a88316.tar.gz",
+      "sha256": "8d6265638382ef76ec6be2d9582be4bc86ebc57e6274171e4c6c7c8ed04a05ab",
+      "notices": [
+        "COPYING",
+        "COPYING.LIB",
+        "COPYING.RUNTIME",
+        "COPYING3",
+        "COPYING3.LIB",
+        "gcc/COPYING",
+        "gcc/COPYING.LIB",
+        "gcc/COPYING3",
+        "gcc/COPYING3.LIB",
+        "gcc/ada/doc/share/copyright.tex",
+        "gcc/go/gofrontend/LICENSE",
+        "gcc/m2/COPYING.FDL",
+        "gcc/m2/COPYING.RUNTIME",
+        "gcc/m2/COPYING3",
+        "gcc/m2/COPYING3.LIB",
+        "gcc/m2/images/LICENSE.IMG",
+        "gcc/rust/checks/errors/borrowck/ffi-polonius/vendor/datafrog/LICENSE-APACHE",
+        "gcc/rust/checks/errors/borrowck/ffi-polonius/vendor/datafrog/LICENSE-MIT",
+        "gcc/rust/checks/errors/borrowck/ffi-polonius/vendor/log/LICENSE-APACHE",
+        "gcc/rust/checks/errors/borrowck/ffi-polonius/vendor/log/LICENSE-MIT",
+        "gcc/rust/checks/errors/borrowck/ffi-polonius/vendor/rustc-hash/LICENSE-APACHE",
+        "gcc/rust/checks/errors/borrowck/ffi-polonius/vendor/rustc-hash/LICENSE-MIT",
+        "gcc/rust/checks/errors/feature/contrib/copyright-stub.h",
+        "gcc/testsuite/gcc.dg/params/LICENSE",
+        "gcc/testsuite/gcc.dg/vect/tsvc/license.txt",
+        "include/COPYING",
+        "include/COPYING3",
+        "libcody/LICENSE",
+        "libffi/LICENSE",
+        "libffi/LICENSE-BUILDTOOLS",
+        "libgcobol/LICENSE",
+        "libgo/LICENSE",
+        "libgo/go/golang.org/x/mod/LICENSE",
+        "libgo/go/golang.org/x/sync/LICENSE",
+        "libgo/go/golang.org/x/tools/LICENSE",
+        "libgo/go/golang.org/x/xerrors/LICENSE",
+        "libgrust/libformat_parser/vendor/libc/LICENSE-APACHE",
+        "libgrust/libformat_parser/vendor/libc/LICENSE-MIT",
+        "libgrust/libformat_parser/vendor/unicode-xid/COPYRIGHT",
+        "libgrust/libformat_parser/vendor/unicode-xid/LICENSE-APACHE",
+        "libgrust/libformat_parser/vendor/unicode-xid/LICENSE-MIT",
+        "libgrust/rustc-lib/LICENSE-APACHE",
+        "libgrust/rustc-lib/LICENSE-MIT",
+        "libgrust/rustc-lib/stdarch/LICENSE-APACHE",
+        "libgrust/rustc-lib/stdarch/LICENSE-MIT",
+        "libgrust/rustc-lib/stdarch/crates/core_arch/LICENSE-APACHE",
+        "libgrust/rustc-lib/stdarch/crates/core_arch/LICENSE-MIT",
+        "libgrust/rustc-lib/stdarch/crates/std_detect/LICENSE-APACHE",
+        "libgrust/rustc-lib/stdarch/crates/std_detect/LICENSE-MIT",
+        "libiberty/COPYING.LIB",
+        "libiberty/copying-lib.texi",
+        "libphobos/libdruntime/LICENSE.txt",
+        "libphobos/src/LICENSE_1_0.txt",
+        "libquadmath/COPYING.LIB",
+        "libsanitizer/LICENSE.TXT",
+        "libstdc++-v3/doc/html/manual/license.html",
+        "libstdc++-v3/include/pstl/LICENSE.txt",
+        "zlib/LICENSE",
+        "zlib/contrib/dotzlib/LICENSE_1_0.txt",
+        "libgcc/libgcc2.c"
+      ],
+      "tag": null,
+      "packaging_source": "Arch-GCC",
+      "notice_note": "Full GCC source, including libgcc and its embedded notices, is supplied with the separately inventoried exact Arch build recipe and patches. COPYING.RUNTIME is retained, not invoked as an exemption from supplying corresponding source."
+    },
+    {
+      "name": "Arch-GCC",
+      "repository": "https://gitlab.archlinux.org/archlinux/packaging/packages/gcc.git",
+      "revision": "13b07516f792b0b11ef818300f9d7a9341f31b5b",
+      "url": "https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/archive/13b07516f792b0b11ef818300f9d7a9341f31b5b/gcc-13b07516f792b0b11ef818300f9d7a9341f31b5b.tar.gz",
+      "sha256": "a0d7ed4f9432ca676e085d70f6cc89df19c65c2c630cc51cdf1c1be7af05991b",
+      "notices": [
+        "LICENSE",
+        "LICENSES/GPL-3.0-or-later.txt",
+        "REUSE.toml"
+      ],
+      "tag": null,
+      "notice_note": "Exact package update commit for 16.2.1+r23+gd564253eb6c8-1, including PKGBUILD, .SRCINFO, c89, c99 and both patches. LICENSES/0BSD.txt is a preserved symlink to ../LICENSE. REUSE.toml distinguishes recipe 0BSD attribution from GPL patch/wrapper attribution."
+    }
+  ],
+  "audit": {
+    "observed_on": "2026-10-13",
+    "release_metadata": "https://api.github.com/repos/LizardByte/build-deps/releases/tags/v2026.910.121303",
+    "source_revision_evidence": "Release target_commitish and Sunshine recursive build-deps gitlink both equal the recorded full revision. All seven nested FFmpeg gitlinks recorded from that tree. nv-codec/libva tags resolved through public GitHub commits API on audit date; historical tag immutability is not independently attested.",
+    "build_scripts": "build-deps CMakeLists.txt, cmake/ffmpeg/*, patches/FFmpeg/*, package-lock.cmake and .github/workflows/ci.yml included with exact source archive. libcbs is built from patched FFmpeg source; hdr10plus and embedded json11 come from x265/source/dynamicHDR10.",
+    "static_inventory": "Eight .a files observed in the independently SHA256-verified Linux asset. Historical Sunshine link also includes static Boost, generated glad and recursive first-party submodules. Actual candidate link input audit is mandatory; this historical observation is not candidate qualification.",
+    "headers": "AMF/Vulkan/libva/nv-codec headers are supplied conservatively as build inputs; presence does not assert each is statically linked.",
+    "license_status": "Original licenses/notices retained. Inventory is source provenance, not a legal opinion, GPL compatibility approval, hardware qualification or authorization to publish. CUDA/toolchain and system libraries retain their own licenses; runtime exceptions must not be inferred here.",
+    "compiler_runtime_provenance": {
+      "observed_package": "gcc 16.2.1+r23+gd564253eb6c8-1",
+      "runtime_package": "libgcc 16.2.1+r23+gd564253eb6c8-1",
+      "archive_owner": "gcc 16.2.1+r23+gd564253eb6c8-1",
+      "architecture": "x86_64",
+      "archive_directory": "/usr/lib/gcc/x86_64-pc-linux-gnu/16",
+      "package_commit": "https://gitlab.archlinux.org/archlinux/packaging/packages/gcc/-/commit/13b07516f792b0b11ef818300f9d7a9341f31b5b",
+      "gcc_commit": "https://forge.sourceware.org/gcc/gcc/commit/d564253eb6c859e266d3cae18e82fb4db9a88316",
+      "source_version": "gcc/BASE-VER is 16.2.1; gcc/DATESTAMP is 20260810; gcc/DEV-PHASE is empty in the downloaded exact GCC archive.",
+      "recipe_correspondence": "The immutable Arch recipe declares pkgver=16.2.1+r23+gd564253eb6c8, pkgrel=1 and the exact GCC commit above. pacman ownership identifies both installed runtime archives and /usr/bin/c++ as that gcc package. This records local source correspondence, not a reproduced compiler build or final CI compiler qualification.",
+      "preparation": "Included PKGBUILD changes gcc/config/i386/t-linux64 from lib64 to lib for m64, applies gcc-ada-repro.patch with -Np0 and tune_branch_prediction_cost.patch with -Np1, and retains complete configure/build/package commands. All four extra source-file SHA256 values below match the immutable recipe.",
+      "recipe_file_sha256": {
+        "PKGBUILD": "0668b0556a7c69b7f42da12c6c595fd51ed783905ceb20cd00daf6ffed5e9291",
+        ".SRCINFO": "8395369a2ccce23db734c31b0c0bf822e791b93af51bc14ba3a5230a4f6318c7",
+        "c89": "7b09ec947f90b98315397af675369a1e3dfc527fa70013062e6e85c4be0275ab",
+        "c99": "44ea973558842f3f4bd666bdaf6e810fd7b7c7bd36b5cc4c69f93d2cd0124fc7",
+        "gcc-ada-repro.patch": "1773f5137f08ac1f48f0f7297e324d5d868d55201c03068670ee4602babdef2f",
+        "tune_branch_prediction_cost.patch": "838e14d4ef76079107a5373316598025915eaf747a10522ec9f8842125ca9a8e"
+      },
+      "digest_scope": "sources[].sha256 hashes actual anonymous HTTPS tar.gz downloads, not the different makepkg VCS git-archive checksum. compiler_runtimes archive_sha256 hashes actual installed .a bytes.",
+      "candidate_binding": "The recipe selects g++; toolchain c++ therefore records the first line from the actual CMAKE_CXX_COMPILER, g++ (GCC) 16.2.1 20260810, not the differently spelled c++ alias. Artifact assembly must reject any candidate version-string or runtime-archive digest mismatch and obtain new exact source evidence before supporting another compiler.",
+      "license_scope": "GCC COPYING3, COPYING.RUNTIME and embedded libgcc notices are retained with full source. No runtime-license exception is assumed to excuse source delivery or constitute redistribution approval."
+    },
+    "publication_blockers": [
+      "No final committed candidate, successful candidate build, or qualified package exists at inventory preparation.",
+      "The supplied GCC/Arch-GCC source and runtime hashes bind only the recorded local g++ toolchain. Final CI must supply its actual compiler version and both runtime archives; any mismatch blocks assembly until corresponding source/notices and exact hashes are independently updated.",
+      "Actual candidate static linkage and source scan must pass release-artifacts.py; every unknown static archive requires an exact source record and audit mapping.",
+      "Package/systemd reboot and real iPad qualification plus release security gates remain external prerequisites."
+    ]
+  },
+  "compiler_runtimes": {
+    "-static-libgcc": {
+      "source": "GCC",
+      "toolchain": "c++",
+      "toolchain_version": "g++ (GCC) 16.2.1 20260810",
+      "archive_sha256": {
+        "libgcc.a": "c70c91346f314b52a3e709b1dad72f37c126c843e90664b475f15c3e63cde47d",
+        "libgcc_eh.a": "ebbc3de25d7317afd5bf3c11f59df8567d2a80dab443246330c41d2de8915a8f"
+      }
+    }
+  },
+  "scan_allowlist": [
+    {
+      "path": "dependencies/GCC/gcc/testsuite/gcc.target/sh/torture/strncmp.c",
+      "sha256": "abd53bb00b5c7f053774e4df0e9b0fb82966901e9e04c235ec4615dc9846eb1e",
+      "reason": "Pinned public GCC strncmp regression test contains only a PEM header string, not private key material."
+    },
+    {
+      "path": "dependencies/GCC/libgo/go/crypto/tls/example_test.go",
+      "sha256": "5c76081732bd28fcbd939291113719827f49ef0f64ac2250a28948314dab8a5e",
+      "reason": "Pinned public Go TLS X509KeyPair examples embed the synthetic example EC key; retain upstream example source, not a deployment credential."
+    },
+    {
+      "path": "dependencies/GCC/libgo/go/crypto/tls/testdata/example-key.pem",
+      "sha256": "4280dcaf02ddf203cc1e3179b872f2e2f130662437b2f525bb24dfab4e7fade3",
+      "reason": "Pinned public Go TLS testdata consumed by ExampleLoadX509KeyPair; retain original synthetic fixture, never use it as a deployment key."
+    },
+    {
+      "path": "source/tests/unit/test_confighttp.cpp",
+      "sha256": "bdaf629544aed73625370b5516c92d0a8279fa02f2f6fbe870b1c444f79f784d",
+      "reason": "Inherited public synthetic test key; retain exact test source, not a deployment key."
+    },
+    {
+      "path": "source/tests/unit/test_http_pairing.cpp",
+      "sha256": "f3e104353fff0bc66d58d37c3e71e15a84ed8cfdb4fe2323f5666e2e7a02848d",
+      "reason": "Inherited public synthetic test key; retain exact test source, not a deployment key."
+    },
+    {
+      "path": "source/third-party/build-deps/third-party/FFmpeg/FFmpeg/libavformat/tls_openssl.c",
+      "sha256": "0567d5c8204c80a61074065a5044abea1f972694d41b60cbcd03dd89d05b677f",
+      "reason": "Public FFmpeg PEM parser marker literal, not private key material."
+    },
+    {
+      "path": "dependencies/FFmpeg/libavformat/tls_openssl.c",
+      "sha256": "0567d5c8204c80a61074065a5044abea1f972694d41b60cbcd03dd89d05b677f",
+      "reason": "Public FFmpeg PEM parser marker literal, not private key material."
+    },
+    {
+      "path": "dependencies/boost/libs/mysql/tools/ssl/server-key.pem",
+      "sha256": "c425c08cd3a62f368e7ed81322d122b73e03c6766735ec69ac6fd90fe42f7e7c",
+      "reason": "Pinned public Boost MySQL synthetic TLS fixture; preserve upstream test inputs."
+    },
+    {
+      "path": "dependencies/boost/libs/mysql/test/unit/test/sansio/handshake/handshake_csha2p_keys.hpp",
+      "sha256": "3d0ba3e70f9606b6df3b16527b1776a673cabe323ac7a1e1069ccafba27c6fd4",
+      "reason": "Pinned public Boost MySQL handshake fixture; preserve upstream test inputs."
+    },
+    {
+      "path": "dependencies/boost/libs/beast/example/common/server_certificate.hpp",
+      "sha256": "38da7e73494f7cdfe9e4852b3475a06a2748403fea2a5d555833f6a1c2766c7e",
+      "reason": "Pinned public Boost Beast demonstration certificate; not a deployment credential."
+    },
+    {
+      "path": "dependencies/boost/libs/redis/tools/docker/tls/ca.key",
+      "sha256": "5ff4585209d5f8920bfb637238e0220368a1a08fa90fcae04c11404b00832d85",
+      "reason": "Pinned public Boost Redis container TLS test fixture; retain original test inputs."
+    },
+    {
+      "path": "dependencies/boost/libs/redis/tools/docker/tls/server.key",
+      "sha256": "76b8b9add6b3799d72d944ca8f7eac97e6fa31341937eaec32fc8c0bc6ab8e87",
+      "reason": "Pinned public Boost Redis container TLS test fixture; retain original test inputs."
+    },
+    {
+      "path": "dependencies/boost/libs/asio/example/cpp11/ssl/server.pem",
+      "sha256": "a6070c979ae317e3db6c9d72129697a3f1d0f76cdb17b31b11c2a322dc593c4e",
+      "reason": "Pinned public Boost Asio SSL example; not a deployment credential."
+    },
+    {
+      "path": "dependencies/boost/libs/asio/example/cpp11/ssl/ca.pem",
+      "sha256": "dfc17a138ce665a7d2f4aae16751ebaff00967f4f85ff1fb20bf1e95a87a2b2a",
+      "reason": "Pinned public Boost Asio SSL example; not a deployment credential."
+    }
+  ]
+}
